@@ -67,10 +67,18 @@ Claude Code Mobile（简称 CCM）是一个**运行在 Android 手机上的命�
 
 ### 🌐 Web 端
 
-同一套内核，也有浏览器界面（Vue 3 + Vite）：
-- 完整的对话界面、模型选择器、设置面板
-- 与 CLI 共享配置与会话数据
-- 可通过局域网在电脑上访问手机里的助手
+同一套内核，也有浏览器界面（Vue 3 + Vite + Tailwind）：
+
+- **约 2.9 万行前端代码**（77 个文件 / 45 个组件）+ 3800 行后端（`web/server.mjs`）
+- **完整对话界面**：流式渲染、思维链折叠、工具调用卡片、代码高亮、Markdown 表格
+- **Artifacts 面板**：类 Claude Artifacts 的侧边预览，支持 React / HTML / SVG 实时渲染
+- **文档系统**：文档卡片、创建流程、预览（含 docx 预览）
+- **多页面**：对话 / 会话列表 / Artifacts / 协作（Cowork）/ 自定义设置
+- **与 CLI 共享配置与会话数据**——同一个 `~/.claude-code-mobile/`，两边无缝切换
+- **局域网访问**：手机跑服务，电脑浏览器直接用
+
+> 诚实说明：Web 端功能覆盖不如 CLI 完整（部分命令只在终端可用），
+> 但界面完成度和交互细节是认真做过的。
 
 ### 🔌 扩展性
 
@@ -254,11 +262,14 @@ claude-code-mobile/
 │   ├── tools-phone.mjs    # 手机操作工具集
 │   └── paths.mjs          # 统一路径解析（数据目录）
 │
-├── web/                   # Web 端（Vue 3 + Vite）
-│   ├── server.mjs         # HTTP/SSE 服务
-│   └── src/               # 前端源码
+├── web/                   # Web 端（Vue 3 + Vite + Tailwind，约 2.9 万行）
+│   ├── server.mjs         # HTTP/SSE 服务（3800 行）
+│   ├── src/
+│   │   ├── components/    # 45 个组件（对话/Artifacts/文档/设置…）
+│   │   └── ...            # 页面、状态、API 客户端
+│   └── public/            # 静态资源（Artifacts 示例库等）
 │
-├── tools/                 # 辅助脚本（MCP server、备份 worker 等）
+├── tools/                 # 辅助脚本（MCP server、check-sync 等）
 ├── assets/                # 字体等静态资源
 └── docs/                  # 开发文档
 ```
