@@ -41,6 +41,7 @@ import { runQuickProviderCommand } from './cmd-quick-provider.mjs'
 import { makeSessionExtraCommands } from './cmd-session-extra.mjs'
 import { makeMarkdownCommand } from './cmd-markdown.mjs'
 import { makeStyleCommand } from './cmd-style.mjs'
+import { makeUpdateCommand } from './cmd-update.mjs'
 import { makeDeviceCommand } from './cmd-device.mjs'
 
 /**
@@ -195,6 +196,9 @@ export function buildCommandTable(ctx, options = {}) {
 
   // /style —— 输出风格（影响回复方式）
   merge('cmd-style', () => makeStyleCommand(ctx))
+
+  // /update —— 版本检查与一键更新（镜像下载，不覆盖用户数据）
+  merge('cmd-update', () => makeUpdateCommand(ctx))
   merge('cmd-session-extra', () => makeSessionExtraCommands(ctx))
 
   // /device —— 设备 shell 通道（Shizuku / adb）
