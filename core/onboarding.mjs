@@ -569,6 +569,12 @@ function buildConfig({ url, model, apiKey, protocol, name, workspace }) {
     permissionMode: 'bypassPermissions',
     fullscreen: true,
     greeting: false,
+    // 自动保活默认开（2026-10-03 用户拍板：「耗不了几个电，但非常有用」）。
+    // 静音音频防系统冻结 Termux，息屏挂机必需。
+    keepaliveAuto: true,
+    // 会话历史显示默认关（2026-10-03 用户拍板：「replayHistory 默认关吧」）。
+    // 进入会话时不铺历史正文，想看用 /replay on。
+    replayHistory: false,
   }
 }
 
