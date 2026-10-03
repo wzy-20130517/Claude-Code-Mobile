@@ -1,0 +1,23 @@
+{
+  "name": "claude-code-mobile",
+  "version": "0.8.145",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cli": "node index.mjs",
+    "web": "node web/server.mjs",
+    "check:web": "node --check web/server.mjs",
+    "test:web": "node web/tests/smoke.mjs",
+    "test": "echo 'tests/ 是临时测试目录：按需写脚本、跑完即清（无固定测试套）'"
+  },
+  "dependencies": {
+    "diff": "9.0.0",
+    "markdown-it": "^14.1.0",
+    "playwright-core": "^1.62.0",
+    "puppeteer-core": "^25.4.0",
+    "vue": "^3.5.18"
+  },
+  "devDependencies": {
+    "happy-dom": "^20.11.1"
+  }
+}

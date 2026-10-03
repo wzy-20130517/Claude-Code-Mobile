@@ -1,0 +1,320 @@
+#!/usr/bin/env node
+/**
+ * mcp-mail-qq.mjs - QQ邮箱 IMAP 只读 MCP server
+ *
+ * 工具:
+ *  - list_messages: 列出最近邮件（主题/发件人/日期）
+ *  - read_message:  读单封邮件正文（自动提取验证码）
+ *  - search_code:   搜索最近 N 分钟内的验证码邮件
+ *
+ * 凭据从环境变量读：MAIL_USER / MAIL_PASS / MAIL_HOST / MAIL_PORT
+ */
+
+import Imap from 'node-imap';
+import { simpleParser } from 'mailparser';
+import libmime from 'libmime';
+
+function decodeHeaderValue(v) {
+  try { return v ? libmime.decodeWords(v) : v; } catch { return v; }
+}
+
+// ---- MCP stdio 协议 ----
+const SERVER_INFO = { name: 'mail-qq', version: '1.0.0' };
+
+const TOOLS = [
+  {
+    name: 'list_messages',
+    description: '列出邮箱最近的邮件（可指定数量和文件夹）',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mailbox: { type: 'string', description: '文件夹名，默认 INBOX', default: 'INBOX' },
+        count:   { type: 'number', description: '返回最近多少封，默认 10', default: 10 }
+      }
+    }
+  },
+  {
+    name: 'read_message',
+    description: '读取指定邮件的完整正文（含验证码自动提取）',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mailbox: { type: 'string', default: 'INBOX' },
+        uid:     { type: 'number', description: '邮件 UID（从 list_messages 获取）' }
+      },
+      required: ['uid']
+    }
+  },
+  {
+    name: 'search_code',
+    description: '在最近 N 分钟内搜索包含验证码/确认链接的邮件并提取',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        minutes:   { type: 'number', description: '回溯几分钟，默认 10', default: 10 },
+        mailbox:   { type: 'string', default: 'INBOX' },
+        fromMatch: { type: 'string', description: '可选：按发件人关键词过滤' }
+      }
+    }
+  }
+];
+
+function connectImap() {
+  return new Promise((resolve, reject) => {
+    const imap = new Imap({
+      user: process.env.MAIL_USER,
+      password: process.env.MAIL_PASS,
+      host: process.env.MAIL_HOST || 'imap.qq.com',
+      port: parseInt(process.env.MAIL_PORT || '993'),
+      tls: true,
+      tlsOptions: { rejectUnauthorized: true },
+      connTimeout: 20000,
+      authTimeout: 20000,
+    });
+    let settled = false;
+    // 永久 error 监听：连接成功后的任何 imap 错误（断连/FETCH 失败）只记日志，
+    // 不抛 unhandled error 导致整个 MCP 进程崩溃（这是“经常看不了”的根因）。
+    imap.on('error', (err) => {
+      console.error('[mail] imap error:', err && err.message ? err.message : String(err));
+      if (!settled) { settled = true; reject(err); }
+    });
+    imap.once('ready', () => { settled = true; resolve(imap); });
+    imap.on('end', () => console.error('[mail] imap connection ended'));
+    imap.connect();
+  });
+}
+
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label || '操作'}超时(${ms}ms)`));
+    }, ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
+
+function openBox(imap, mailbox) {
+  return new Promise((res, rej) => imap.openBox(mailbox, true, (err, box) => err ? rej(err) : res(box)));
+}
+
+function extractCode(text) {
+  // 常见验证码：4~8 位数字，或字母数字混合码（如 8b5acb）
+  // 中文不是 \w，所以 [^\w]{0,12} 能跨过“验证码为: ”这类前缀
+  const m = text.match(/(?:验证码|verification|code|OTP|确认码|动态码)[^\w]{0,12}([A-Za-z0-9]{4,8})/i)
+         || text.match(/\b(\d{6})\b/)  // 裸 6 位纯数字
+         || text.match(/\b([A-Za-z0-9]{6})\b/)  // 裸 6 位字母数字
+         || text.match(/\b(\d{4,8})\b/);
+  return m ? m[1] : null;
+}
+
+function extractLinks(text) {
+  return (text.match(/https?:\/\/[^\s"'<>\u4e00-\u9fa5]+/g) || [])
+    .filter(u => /confirm|verify|activate|validate|token|code/i.test(u))
+    .slice(0, 5);
+}
+
+async function fetchMessages(imap, mailbox, count) {
+  const box = await openBox(imap, mailbox);
+  const total = box.messages.total;
+  if (total === 0) return [];
+  const start = Math.max(1, total - count + 1);
+  return withTimeout(new Promise((resolve, reject) => {
+    const msgs = [];
+    const f = imap.seq.fetch(`${start}:${total}`, {
+      bodies: 'HEADER.FIELDS (FROM TO SUBJECT DATE)',
+      struct: false
+    });
+    f.on('message', (msg) => {
+      const item = {};
+      msg.on('body', (stream) => {
+        let buf = '';
+        stream.on('data', c => buf += c);
+        stream.on('end', () => {
+          item._header = buf;
+          const get = (k) => {
+            const m = buf.match(new RegExp(`^${k}:\\s*(.+)$`, 'mi'));
+            return m ? m[1].trim() : '';
+          };
+          item.from = decodeHeaderValue(get('From'));
+          item.subject = decodeHeaderValue(get('Subject'));
+          item.date = get('Date');
+        });
+      });
+      msg.once('attributes', (a) => { item.uid = a.uid; item.seqno = a.seqno; });
+      msg.once('end', () => msgs.push(item));
+    });
+    f.once('error', reject);
+    f.once('end', () => resolve(msgs.reverse())); // 最新在前
+  }), 20000, 'list_messages');
+}
+
+async function fetchFullMessage(imap, mailbox, uid) {
+  await openBox(imap, mailbox);
+  return withTimeout(new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (fn, v) => { if (!settled) { settled = true; fn(v); } };
+    // 关键：list_messages 返回的是 UID，node-imap 的 imap.fetch() 默认按序列号取，
+    // 邮箱封数少时 uid 数字碰巧能当序列号，一旦 uid 超过总封数就 not found。必须 byUid:true。
+    const f = imap.fetch([uid], { bodies: '', struct: true, byUid: true });
+    let got = null;
+    let pending = 0, done = false;
+    f.on('message', (msg) => {
+      pending++;
+      msg.on('body', (stream) => {
+        // simpleParser 是异步的，fetch end 时可能还没回调完；
+        // 必须用 pending 计数等它完成，否则误报 message not found。
+        simpleParser(stream, (err, parsed) => {
+          pending--;
+          if (err) return settle(reject, err);
+          got = parsed;
+          if (done && pending === 0) finish();
+        });
+      });
+    });
+    const finish = () => {
+      if (!got) return settle(reject, new Error('message not found'));
+      const text = got.text || got.html?.replace(/<[^>]+>/g, ' ') || '';
+      settle(resolve, {
+        uid,
+        from: got.from?.text,
+        subject: got.subject,
+        date: got.date,
+        text: text.slice(0, 5000),
+        code: extractCode(text),
+        links: extractLinks(text)
+      });
+    };
+    f.once('error', (e) => settle(reject, e));
+    f.once('end', () => {
+      done = true;
+      if (pending === 0) finish();
+    });
+  }), 25000, 'read_message');
+}
+
+async function searchCode(mailbox, minutes, fromMatch) {
+  const imap = await connectImap();
+  try {
+    const box = await openBox(imap, mailbox);
+    const since = new Date(Date.now() - minutes * 60 * 1000);
+    return await withTimeout(new Promise((resolve, reject) => {
+      let settled = false;
+      const settle = (fn, v) => { if (!settled) { settled = true; fn(v); } };
+      imap.search([['SINCE', since]], (err, uids) => {
+        if (err) return settle(reject, err);
+        if (!uids || uids.length === 0) return settle(resolve, []);
+        // search 返回的是 UID 数组，同样必须 byUid:true 按 UID 取，否则取错/取不到。
+        const f = imap.fetch(uids.slice(-20), { bodies: '', struct: true, byUid: true });
+        const results = [];
+        let pending = 0, done = false;
+        f.on('message', (msg) => {
+          pending++;
+          let msgUid = null;
+          msg.once('attributes', (a) => { if (a && a.uid) msgUid = a.uid; });
+          msg.on('body', (stream) => {
+            simpleParser(stream, (err, parsed) => {
+              pending--;
+              if (!err && parsed) {
+                const text = parsed.text || parsed.html?.replace(/<[^>]+>/g, ' ') || '';
+                if (!fromMatch || (parsed.from?.text || '').toLowerCase().includes(fromMatch.toLowerCase())) {
+                  const code = extractCode(text);
+                  const links = extractLinks(text);
+                  if (code || links.length) {
+                    results.push({
+                      uid: msgUid,
+                      from: parsed.from?.text,
+                      subject: parsed.subject,
+                      date: parsed.date,
+                      code,
+                      links,
+                      snippet: text.slice(0, 500)
+                    });
+                  }
+                }
+              }
+              if (done && pending === 0) settle(resolve, results);
+            });
+          });
+        });
+        f.once('error', (e) => settle(reject, e));
+        f.once('end', () => {
+          done = true;
+          if (pending === 0) settle(resolve, results);
+        });
+      });
+    }), 30000, 'search_code');
+  } finally {
+    imap.end();
+  }
+}
+
+async function callTool(name, args) {
+  if (name === 'list_messages') {
+    const imap = await connectImap();
+    try {
+      const msgs = await fetchMessages(imap, args.mailbox || 'INBOX', args.count || 10);
+      return msgs.map(m => ({ uid: m.uid, from: m.from, subject: m.subject, date: m.date }));
+    } finally { imap.end(); }
+  }
+  if (name === 'read_message') {
+    const imap = await connectImap();
+    try { return await fetchFullMessage(imap, args.mailbox || 'INBOX', args.uid); }
+    finally { imap.end(); }
+  }
+  if (name === 'search_code') {
+    return await searchCode(args.mailbox || 'INBOX', args.minutes || 10, args.fromMatch);
+  }
+  throw new Error('unknown tool: ' + name);
+}
+
+// ---- MCP stdio loop ----
+let buffer = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  let idx;
+  while ((idx = buffer.indexOf('\n')) >= 0) {
+    const line = buffer.slice(0, idx).trim();
+    buffer = buffer.slice(idx + 1);
+    if (!line) continue;
+    let msg;
+    try { msg = JSON.parse(line); } catch { continue; }
+    handleMessage(msg).catch(() => {});
+  }
+});
+
+async function handleMessage(msg) {
+  const { id, method, params } = msg;
+  const respond = (result) =>
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');
+  const respondErr = (message) =>
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32000, message } }) + '\n');
+
+  try {
+    if (method === 'initialize') {
+      return respond({
+        protocolVersion: params?.protocolVersion || '2024-11-05',
+        capabilities: { tools: {} },
+        serverInfo: SERVER_INFO
+      });
+    }
+    if (method === 'notifications/initialized') return;
+    if (method === 'tools/list') return respond({ tools: TOOLS });
+    if (method === 'tools/call') {
+      try {
+        const result = await callTool(params.name, params.arguments || {});
+        return respond({ content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] });
+      } catch (e) {
+        return respond({ content: [{ type: 'text', text: 'ERROR: ' + e.message }], isError: true });
+      }
+    }
+    if (method === 'ping') return respond({});
+    // 未知方法
+    if (id !== undefined) return respondErr('method not found: ' + method);
+  } catch (e) {
+    if (id !== undefined) respondErr(e.message);
+  }
+}

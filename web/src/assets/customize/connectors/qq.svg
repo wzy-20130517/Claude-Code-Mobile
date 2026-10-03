@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- QQ 企鹅。手绘简化版：不做官方商标的精确复刻，只用可辨识的轮廓
+       （圆身 + 白肚 + 橙嘴 + 红围巾），避免直接用腾讯商标资源。 -->
+  <defs>
+    <linearGradient id="qqBody" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3A3A3A"/>
+      <stop offset="100%" stop-color="#1F1F1F"/>
+    </linearGradient>
+  </defs>
+  <!-- 身体 -->
+  <ellipse cx="24" cy="28" rx="15" ry="16" fill="url(#qqBody)"/>
+  <!-- 白肚 -->
+  <ellipse cx="24" cy="31" rx="9.5" ry="11.5" fill="#FFFFFF"/>
+  <!-- 头 -->
+  <circle cx="24" cy="14" r="10.5" fill="#2B2B2B"/>
+  <!-- 眼白 -->
+  <ellipse cx="20" cy="12.5" rx="3.1" ry="3.6" fill="#FFFFFF"/>
+  <ellipse cx="28" cy="12.5" rx="3.1" ry="3.6" fill="#FFFFFF"/>
+  <!-- 瞳孔 -->
+  <circle cx="20.4" cy="13" r="1.5" fill="#111111"/>
+  <circle cx="27.6" cy="13" r="1.5" fill="#111111"/>
+  <!-- 嘴 -->
+  <path d="M20.5 18.2 L27.5 18.2 L24 21.6 Z" fill="#F5A623"/>
+  <!-- 围巾 -->
+  <path d="M11 24 Q24 29 37 24 L37 27 Q24 32 11 27 Z" fill="#E23B2E"/>
+  <!-- 脚 -->
+  <ellipse cx="17.5" cy="43.5" rx="5" ry="2.6" fill="#F5A623"/>
+  <ellipse cx="30.5" cy="43.5" rx="5" ry="2.6" fill="#F5A623"/>
+</svg>

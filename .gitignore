@@ -1,0 +1,28 @@
+node_modules/
+.git/objects/
+*.log
+tmp/
+temp/
+
+# Playwright MCP 每次操作都会落一份页面快照/控制台日志，纯调试产物
+.playwright-mcp/
+# 浏览器自动化的临时截图
+page-*.png
+page-*.jpeg
+probe-*.png
+shot-*.png
+
+# ── 运行时数据（2026-09-16 补，2026-10-03 重写）──
+# 【2026-10-03】所有用户数据已迁到 ~/.claude-code-mobile/（见 core/paths.mjs）：
+#   config.json / hooks.json / mcp.json / permissions.json / .env
+#   sessions / trash / undo / traces / CLAUDE.md ...
+# 源码目录内不再产生任何数据文件。下面两条兜底忽略老位置，防止误提交。
+.claude-code-mobile/
+CLAUDE.md
+# 用户级 agents/commands/memory（已迁到 ~/.claude-code-mobile/agents|commands|agent-memory）
+.claude/
+# 判断标准：换台机器重新 clone 后，这些内容**应该不存在**（运行时会重新生成）。
+web/dist/
+
+# tests/ 是临时测试目录：脚本跑完即清、不进版本控制（README 保留）
+tests/*.mjs
