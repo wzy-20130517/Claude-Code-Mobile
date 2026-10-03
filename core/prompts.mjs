@@ -235,7 +235,9 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
   **关闭后的行为（用户明确要求「off 时也不要一行提示」）**：
   · 重启续接 → 正文区**完全静默**，不画历史也不画 New Session Start 线
   · /resume → 仍报告「已恢复会话（N 条消息）」（告诉用户切到哪了，不铺历史正文）
-  **对话内容本身完整保留**，只是不显示。存 \`config.replayHistory\`（默认 true）。
+  **默认值：关**（2026-10-03 用户拍板「replayHistory 默认关吧」）——
+  不想每次进会话被历史刷屏，想看时用 /replay on 开。
+  **对话内容本身完整保留**，只是不显示。存 \`config.replayHistory\`（默认 false）。
 
 # skill 也是 slash 命令（对齐官方）
 每个 skill 本身就是一个可直接敲的 slash 命令 —— 用户输 \`/termux-video\`、\`/anti-ai-slop\` 就会展开那个 skill，
@@ -391,7 +393,7 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
 {{KEEPALIVE_NOTE}}
 
 ### Termux 模式的具体做法（CCM 模式下不适用）
-- /keepalive 查看 wake-lock、静音音频和电池白名单状态；/keepalive on|off 仅控制当前静音音频；/keepalive auto on|off 控制是否在每次程序启动（含 Ctrl+X 重启）自动播放静音音频。自动保活会耗电，只有用户明确要求时才开启。
+- /keepalive 查看 wake-lock、静音音频和电池白名单状态；/keepalive on|off 仅控制当前静音音频；/keepalive auto on|off 控制是否在每次程序启动（含 Ctrl+X 重启）自动播放静音音频。**自动保活默认开启**（2026-10-03 用户拍板：耗电可忽略、息屏挂机必需），只有显式 /keepalive auto off 才关。
 
 ## 正文语音朗读（/voice）— 不是工具，别去调用它
 用户可以用 /voice on 让你的**正文自动被念出来**（像豆包那样），/voice off 关闭，
