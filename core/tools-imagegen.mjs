@@ -9,22 +9,24 @@
 //     "saveDir": "/sdcard/Download/claude-workspace" // 可选保存目录
 //   }
 import { Tool } from './tools.mjs'
-import { ensureParentDir } from './paths.mjs'
+import { ensureParentDir, resolveConfigPath } from './paths.mjs'
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { resolve, join, basename } from 'node:path'
 import { homedir } from 'node:os'
 import { loadEnvFile, resolveEnvString } from './env-secrets.mjs'
 import { getWorkspacePath } from './workspace.mjs'
 
-// 【必须锚定到模块自身位置，不能用相对路径】（2026-08-30 定位的真 bug）
-// './config.json' 跟着进程 CWD 走：从 ~/claude-code-mobile 启动读写的是项目配置，
-// 从别的目录启动就会读写【另一份】config.json——表现为
-// 「/imagegen key 明明设置成功了，重启后一查字段没了」。
-// 用户的历史 url/model 配置就是这么丢的：当时写进了 CWD 所在目录的那份 config.json，
-// 换目录启动后读不到了。import.meta.url 锚定：本文件在 core/ 下，
-// ../config.json = 项目根的 config.json，与启动位置无关。
-// （注意是 ../ 不是 ../../ —— 前者指项目根，后者会飘到家目录。）
-const CONFIG_PATH = new URL('../config.json', import.meta.url).pathname
+// 【配置路径】必须走 resolveConfigPath：
+//   - 优先 ~/.claude-code-mobile/config.json（数据目录，2026-09 起的主位置）
+//   - 回退项目根 config.json（老用户升级场景）
+//
+// 历史 bug（2026-10-03 定位）：这里曾硬编码 new URL('../config.json', import.meta.url)，
+// 只读项目根的 config.json。而用户配置已迁到 ~/.claude-code-mobile/config.json，
+// 项目根那份不存在 → getImageGenConfig() 恒返回 null → ImageGen 工具永远报
+// 「生图未配置」，哪怕配置明明是对的。
+// （更早的 2026-08-30 也修过一次：那时问题是相对 CWD 漂移，改成了锚定模块位置。
+//   这次是配置目录迁移后没跟着走 —— 所以正确做法是统一用 resolveConfigPath。）
+const CONFIG_PATH = resolveConfigPath('config.json')
 
 export function getImageGenConfig() {
   try {
