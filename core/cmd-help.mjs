@@ -162,6 +162,7 @@ export function makeHelpCommand(ctx) {
   /image [路径|序号] 识图（无参=最新截图，/image list 挑图）
   /imagegen          生图配置（画图用，直接说「画一张…」即可）
   /keys             快捷键速查    /doctor        诊断问题
+  /update           检查并更新版本（镜像下载，不覆盖数据）
   /btw <问题>        顺嘴问一句（看得到对话，不占后续上下文）
 
 按主题展开
