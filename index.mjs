@@ -6829,23 +6829,30 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
       }
       rl.onHistoryUp = () => queueStep('up')
       rl.onHistoryDown = () => queueStep('down')
-      // Ctrl+S：把当前翻到的排队消息【立刻发出去】（2026-10-03 用户要求）。
+      // Ctrl+S：把排队消息【立即注入当前轮】（2026-10-03 用户要求）。
       //
-      // 【和 Ctrl+C 的分工】
-      //   Ctrl+C = 打断当前轮 → 队列自动放行（原来是「停下来让我改」）
-      //   Ctrl+S = **不打断**当前轮 → 把指定那条插到队首，优先执行
-      // 用户场景：正在跑一个长任务，但我刚排的那条更急（「先停一下，改个方向」），
-      // 不想干等几分钟。这时 Ctrl+S 把那条提到最前面。
+      // 【用户原话】「如果是slash命令，任务不断，并且立即执行。
+      //             如果是消息，那就立即发给agent。」
+      // 进一步澄清：「也不一定要翻到某条吧」「不管输入框」
       //
-      // 【只处理终端队列】QQ 队列在桥内部，用户明确说「QQ桥没事，我说cli排队」，
-      // 所以这里只管 pendingInputs；翻到 QQ 消息时不处理（返回 false）。
+      // 【和"排队"的区别】
+      //   排队 = 等当前轮整个跑完，才轮到这条（可能要几分钟）
+      //   Ctrl+S = 塞进 agent 的 steering 队列，**当前工具批次不打断**，
+      //            下一轮模型调用前就注入（agent.mjs 的 pullSteering 机制）
       //
-      // 【实现】把目标条目从队列里摘出来，插到队首。
-      // 当前轮跑完后，收尾逻辑自然会 shift() 出这条 —— 不需要额外机制。
+      // 【机制】core/agent.mjs:717 pushSteering(text) → 内部队列
+      //   → 循环每轮开头 pullSteering() 取出，以「执行中补充指令」角色插入 messages
+      //   → 模型下一轮就能看到。子 Agent 已在用（plan.mjs resumeSubagent）。
+      //
+      // 【不管输入框】用户明确说「不管输入框」—— 输入框有字时按 Ctrl+S
+      //   不处理（那条字该排队排队、该编辑编辑），只处理排队消息。
+      //
+      // 【要不要先翻】不用。默认取最后一条（刚排的那条）；
+      //   想指定别的才需要 Ctrl+P/N 翻过去。
       rl.onQueueSend = () => {
         const all = unifiedQueue()
         if (!all.length) return false
-        // 没在翻队列时，发最后一条（最可能是刚排的那条）
+        // 没翻队列时取最后一条（最可能是刚排的那条）
         const idx = queuedEditIndex >= 0 ? queuedEditIndex : all.length - 1
         if (idx < 0 || idx >= all.length) return false
         const target = all[idx]
@@ -6854,10 +6861,52 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
 
         const [item] = pendingInputs.splice(target.i, 1)
         if (item === undefined) return false
-        pendingInputs.unshift(item)
         const text = String(item)
-        const preview = text.replace(/\s+/g, ' ').slice(0, 28)
-        emit(`${C.dim}[已把「${preview}${text.length > 28 ? '…' : ''}」提到队首，本轮结束后优先执行]${C.reset}\n`)
+
+        // slash 命令：不进 steering（它要的是"立即执行"，不是"给模型当上下文"），
+        // 走已有的插队执行路径 —— 但如果它不在白名单里，说明会破坏当前轮，
+        // 这时退回 steering（至少让模型下一轮看到用户想干什么）。
+        if (text.trim().startsWith('/')) {
+          const body = text.trim().slice(1).trim()
+          const [cmdName] = body.split(/\s+/)
+          const name = String(cmdName || '').toLowerCase()
+          if (typeof isReadonlyCommand === 'function' && isReadonlyCommand(text)) {
+            // 白名单内 → 立刻执行（异步，不阻塞输入）
+            const cmdArgs = body.split(/\s+/).slice(1)
+            activeSlashCommand = { name, startedAt: Date.now() }
+            refreshActivityBoard()
+            Promise.resolve()
+              .then(() => handleCommand(text, body, name, cmdArgs))
+              .then((out) => { if (typeof out === 'string' && out) emit(`${C.dim}${out}${C.reset}\n`) })
+              .catch((e) => emit(`${C.yellow}命令执行失败: ${e?.message || e}${C.reset}\n`))
+              .finally(() => {
+                activeSlashCommand = null
+                refreshActivityBoard()
+                updateFsStatus()
+                if (fsSession) { try { fsSession.flushRender() } catch {} }
+              })
+            const preview0 = text.replace(/\s+/g, ' ').slice(0, 28)
+            emit(`${C.dim}[已插队执行「${preview0}${text.length > 28 ? '…' : ''}」（当前任务继续）]${C.reset}\n`)
+          } else {
+            // 白名单外 → 不能安全插队（会改 agent.messages / 换 api 实例等），
+            // 退回 steering：让模型下一轮知道用户想跑这条命令，自己决定何时停手。
+            try { agent?.pushSteering?.(`用户请求立即执行命令：${text.trim()}`) } catch {}
+            const preview0 = text.replace(/\s+/g, ' ').slice(0, 28)
+            emit(`${C.dim}[「${preview0}${text.length > 28 ? '…' : ''}」会改动当前任务，已作为补充指令注入（下一轮模型可见）]${C.reset}\n`)
+          }
+        } else {
+          // 普通消息 → 注入 steering，当前工具批次不打断，下一轮模型调用前可见
+          try {
+            agent?.pushSteering?.(text)
+            const preview = text.replace(/\s+/g, ' ').slice(0, 28)
+            emit(`${C.dim}[已把「${preview}${text.length > 28 ? '…' : ''}」注入当前任务，模型下一轮就会看到]${C.reset}\n`)
+          } catch (e) {
+            // 注入失败（比如 agent 已经不在跑）→ 放回队列，别丢
+            pendingInputs.unshift(item)
+            emit(`${C.yellow}[注入失败，已放回队列：${e?.message || e}]${C.reset}\n`)
+            return false
+          }
+        }
 
         queuedEditIndex = -1
         rl.line = ''
