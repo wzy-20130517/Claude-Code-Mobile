@@ -6829,6 +6829,43 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
       }
       rl.onHistoryUp = () => queueStep('up')
       rl.onHistoryDown = () => queueStep('down')
+      // Ctrl+S：把当前翻到的排队消息【立刻发出去】（2026-10-03 用户要求）。
+      //
+      // 【和 Ctrl+C 的分工】
+      //   Ctrl+C = 打断当前轮 → 队列自动放行（原来是「停下来让我改」）
+      //   Ctrl+S = **不打断**当前轮 → 把指定那条插到队首，优先执行
+      // 用户场景：正在跑一个长任务，但我刚排的那条更急（「先停一下，改个方向」），
+      // 不想干等几分钟。这时 Ctrl+S 把那条提到最前面。
+      //
+      // 【只处理终端队列】QQ 队列在桥内部，用户明确说「QQ桥没事，我说cli排队」，
+      // 所以这里只管 pendingInputs；翻到 QQ 消息时不处理（返回 false）。
+      //
+      // 【实现】把目标条目从队列里摘出来，插到队首。
+      // 当前轮跑完后，收尾逻辑自然会 shift() 出这条 —— 不需要额外机制。
+      rl.onQueueSend = () => {
+        const all = unifiedQueue()
+        if (!all.length) return false
+        // 没在翻队列时，发最后一条（最可能是刚排的那条）
+        const idx = queuedEditIndex >= 0 ? queuedEditIndex : all.length - 1
+        if (idx < 0 || idx >= all.length) return false
+        const target = all[idx]
+        // QQ 消息不走这条路（用户明确说只管 CLI 队列）
+        if (target.kind !== 'local') return false
+
+        const [item] = pendingInputs.splice(target.i, 1)
+        if (item === undefined) return false
+        pendingInputs.unshift(item)
+        const text = String(item)
+        const preview = text.replace(/\s+/g, ' ').slice(0, 28)
+        emit(`${C.dim}[已把「${preview}${text.length > 28 ? '…' : ''}」提到队首，本轮结束后优先执行]${C.reset}\n`)
+
+        queuedEditIndex = -1
+        rl.line = ''
+        rl.cursor = 0
+        taskState.setQueueLength(pendingInputs.length + qqBridge.pendingCount())
+        rl.render()
+        return true
+      }
       // Ctrl+G：删掉当前翻到的那条排队消息（发错了不用干等它执行）
       rl.onQueueDelete = () => {
         const all = unifiedQueue()
