@@ -35,7 +35,7 @@ import { cmdAgents } from './cmd-agents.mjs'
 import { makeImageGenCommand } from './cmd-imagegen.mjs'
 import { makePermissionsCommand } from './cmd-permissions.mjs'
 import { makeQqCommand } from './cmd-qq.mjs'
-import { makeBackupCommand } from './cmd-backup.mjs'
+// 【已删除 2026-10-03】cmd-backup.mjs —— /backup 功能下线（用户：CLI 成熟了，不需要防源码丢失动备份）
 import { makeHelpCommand } from './cmd-help.mjs'
 import { runQuickProviderCommand } from './cmd-quick-provider.mjs'
 import { makeSessionExtraCommands } from './cmd-session-extra.mjs'
@@ -188,7 +188,6 @@ export function buildCommandTable(ctx, options = {}) {
   merge('cmd-imagegen', () => makeImageGenCommand(ctx))
   merge('cmd-permissions', () => makePermissionsCommand(ctx))
   merge('cmd-qq', () => makeQqCommand(ctx))
-  merge('cmd-backup', () => makeBackupCommand(ctx))
   merge('cmd-help', () => makeHelpCommand(ctx))
 
   // /markdown —— 渲染样式切换（经典 / 官方）
