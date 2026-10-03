@@ -140,10 +140,31 @@ function trustOf(url) {
     // 官方注册域 → 一手来源，任意子域都算（api-docs.deepseek.com、platform.openai.com）。
     // 必须排在 DOMAIN_TRUST 之前：否则会被后面更宽松的规则先命中。
     if (OFFICIAL_APEX.has(apexOf(host))) return 4
+    // ── 垂直源降权（2026-10-03）─────────────────────────
+    //
+    // 【为什么】这些源是「关键词恰好落在其领域时才有用」的专库，
+    // 但它们的域名本身很权威（.gov / 官方 API），按原规则会拿 2~4 分，
+    // 结果实测搜 vite 时前 3 条全是 NVD 的 CVE（含 VITEC、Vitess 这类
+    // 只是名字里带 vite 的无关条目），把真正有用的 GitHub/SO 挤到后面。
+    //
+    // 降到 1.8：仍高于一般 UGC（1.5），但低于通用技术站（2）——
+    // 用户还是能看到它们（信息不丢），只是不会占据前排。
+    if (VERTICAL_HOSTS.has(host.replace(/^www\./, ''))) return 1.8
     for (const [re, s] of DOMAIN_TRUST) if (re.test(host)) return s
     return 1
   } catch { return 1 }
 }
+
+// 垂直源 host 集合（trustOf 降权用）。
+// 注意与 VERTICAL_SOURCES 的区别：那个用于「相关性过滤」（值不同、用途不同），
+// 这个是「权威度降权」。两者覆盖的源基本一致，但独立维护 ——
+// 将来可能只过滤不降权（或反之）。
+const VERTICAL_HOSTS = new Set([
+  'arxiv.org', 'openalex.org', 'doi.org', 'pubmed.ncbi.nlm.nih.gov',
+  'npmjs.com', 'pypi.org', 'developer.mozilla.org',
+  'zenodo.org', 'doaj.org', 'europepmc.org', 'crates.io',
+  'nvd.nist.gov', 'endoflife.date', 'huggingface.co',
+])
 
 // 标签不只给星级，还写清「该怎么用这条」—— 光有星级我上次就直接忽略了
 const TRUST_LABEL = {
@@ -609,6 +630,206 @@ async function searchMdn(q) {
   } catch { return [] }
 }
 
+// ── 第二批垂直源（2026-10-03 加，8 个）──────────────────────
+//
+// 【来源】同一批调研的第二轮 —— 用户说「还有很多源可加呢」，
+// 于是把 free-search-mcp 剩余引擎批量实测（30 个候选），
+// 23 个连通，再按价值筛选出这 8 个。
+//
+// 【筛选标准】「用户会真的问到的问题」——
+//   · zenodo/doaj/europepmc：补学术空白（arXiv 偏 CS/物理、PubMed 偏医学，
+//     这三个覆盖数据集/开放期刊/生命科学）
+//   · crates：补 Rust 生态（原来只有 npm/PyPI）
+//   · nvd：CVE 漏洞库（「这个库有漏洞吗」是安全高频问题）
+//   · endoflife：软件生命周期（「Python 3.9 什么时候停止支持」）
+//   · huggingface-alt：HF 官方站被墙，走 hf-mirror.com 镜像（实测可用）
+//   · github-releases：查某个软件的最新版本（GitHub 搜索只给仓库，不给 release）
+//
+// 【没加的】rdap/gleif/holidays/facts/frankfurter/worldbank/imf/ietf/osv/
+// dataverse/clinicaltrials/govuk/sec-edgar/federalregister ——
+// 太专用，日常问不到；加了只会让每次搜索多等一个超时。
+
+/** Zenodo（开放科研数据集 + 论文，CERN 运营） */
+async function searchZenodo(q) {
+  try {
+    const r = await fetch(`https://zenodo.org/api/records?q=${encodeURIComponent(q)}&size=5`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+    if (!r.ok) return []
+    const j = await r.json()
+    return (j?.hits?.hits || []).slice(0, 5).map((h) => {
+      const md = h.metadata || {}
+      const creators = (md.creators || []).slice(0, 3).map((c) => c.name).filter(Boolean).join(', ')
+      return {
+        title: stripTags(md.title || '').slice(0, 80),
+        url: h.doi_url || h.links?.self_html || (h.doi ? `https://doi.org/${h.doi}` : ''),
+        snippet: `${String(md.publication_date || '').slice(0, 10)} · ${md.resource_type?.title || 'dataset'}${creators ? ' · ' + creators : ''}`,
+        source: 'zenodo.org',
+      }
+    }).filter((x) => x.url && x.title)
+  } catch { return [] }
+}
+
+/** DOAJ（开放获取期刊目录） */
+async function searchDoaj(q) {
+  try {
+    const r = await fetch(`https://doaj.org/api/search/articles/${encodeURIComponent(q)}?pageSize=5`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+    if (!r.ok) return []
+    const j = await r.json()
+    return (j?.results || []).slice(0, 5).map((it) => {
+      const b = it.bibjson || {}
+      const authors = (b.author || []).slice(0, 3).map((a) => a.name).filter(Boolean).join(', ')
+      return {
+        title: stripTags(b.title || '').slice(0, 80),
+        url: b.link?.[0]?.url || (it.id ? `https://doaj.org/article/${it.id}` : ''),
+        snippet: `${b.year || '?'} · ${b.journal?.title || ''}${authors ? ' · ' + authors : ''}`.slice(0, 140),
+        source: 'doaj.org',
+      }
+    }).filter((x) => x.url && x.title)
+  } catch { return [] }
+}
+
+/** Europe PMC（生命科学文献，比 PubMed 覆盖更广） */
+async function searchEuropePmc(q) {
+  try {
+    const r = await fetch(`https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(q)}&format=json&pageSize=5`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+    if (!r.ok) return []
+    const j = await r.json()
+    return (j?.resultList?.result || []).slice(0, 5).map((it) => ({
+      title: stripTags(it.title || '').slice(0, 80),
+      url: it.doi ? `https://doi.org/${it.doi}` : (it.pmid ? `https://pubmed.ncbi.nlm.nih.gov/${it.pmid}/` : ''),
+      snippet: `${it.pubYear || '?'} · ${it.journalTitle || ''}${it.authorString ? ' · ' + it.authorString.slice(0, 50) : ''}`.slice(0, 140),
+      source: 'europepmc.org',
+    })).filter((x) => x.url && x.title)
+  } catch { return [] }
+}
+
+/** crates.io（Rust 包） */
+async function searchCrates(q) {
+  try {
+    const r = await fetch(`https://crates.io/api/v1/crates?q=${encodeURIComponent(q)}&per_page=5`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+    if (!r.ok) return []
+    const j = await r.json()
+    return (j?.crates || []).slice(0, 5).map((c) => ({
+      title: `${c.name}${c.description ? ' — ' + stripTags(c.description).slice(0, 50) : ''}`,
+      url: `https://crates.io/crates/${c.name}`,
+      snippet: `v${c.max_version || '?'} · ${String(c.updated_at || '').slice(0, 10)} · 下载 ${(c.downloads || 0).toLocaleString()}`,
+      source: 'crates.io',
+    })).filter((x) => x.url && x.title)
+  } catch { return [] }
+}
+
+/** NVD（美国国家漏洞库，CVE 查询）
+ *
+ *  【为什么要收紧】NVD 的 keywordSearch 是**全文模糊匹配**，
+ *  搜 vite 会返回 VITEC（IPTV 设备）、Vitess（数据库）这些
+ *  只是名字里带 vite 的无关条目，实测占了前排 3 条。
+ *  所以拿到结果后本地再过滤一次：CVE 描述或 ID 里必须真的含关键词。
+ */
+async function searchNvd(q) {
+  try {
+    const kw = String(q).toLowerCase().trim()
+    const r = await fetch(`https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(q)}&resultsPerPage=10`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(20000) })
+    if (!r.ok) return []
+    const j = await r.json()
+    const out = []
+    for (const v of (j?.vulnerabilities || [])) {
+      const c = v.cve || {}
+      const desc = (c.descriptions || []).find((d) => d.lang === 'en')?.value || ''
+      // 本地二次过滤：关键词必须出现在描述里（按词边界，避免 VITEC 匹配 vite）
+      const hay = desc.toLowerCase()
+      const hit = /\s/.test(kw)
+        ? kw.split(/\s+/).every((w) => w.length < 3 || hay.includes(w))
+        : new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(hay)
+      if (!hit) continue
+      const score = c.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore
+        || c.metrics?.cvssMetricV30?.[0]?.cvssData?.baseScore
+        || c.metrics?.cvssMetricV2?.[0]?.cvssData?.baseScore
+      out.push({
+        title: `${c.id || ''} — ${stripTags(desc).slice(0, 60)}`,
+        url: `https://nvd.nist.gov/vuln/detail/${c.id || ''}`,
+        snippet: `${String(c.published || '').slice(0, 10)}${score ? ' · CVSS ' + score : ''}`,
+        source: 'nvd.nist.gov',
+      })
+      if (out.length >= 5) break
+    }
+    return out
+  } catch { return [] }
+}
+
+/** endoflife.date（软件生命周期，查「XX 什么时候停止支持」） */
+async function searchEndOfLife(q) {
+  try {
+    // 先拿全部产品名，再按关键词模糊匹配（API 没有搜索接口）
+    const list = await fetch('https://endoflife.date/api/all.json',
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+    if (!list.ok) return []
+    const all = await list.json()
+    const kw = String(q).toLowerCase().replace(/\s+/g, '')
+    const hit = all.filter((n) => String(n).toLowerCase().includes(kw)).slice(0, 3)
+    if (!hit.length) return []
+    const out = []
+    for (const name of hit) {
+      const r = await fetch(`https://endoflife.date/api/${encodeURIComponent(name)}.json`,
+        { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+      if (!r.ok) continue
+      const cycles = await r.json()
+      const cur = (Array.isArray(cycles) ? cycles : []).slice(0, 3)
+      for (const c of cur) {
+        out.push({
+          title: `${name} ${c.cycle}`,
+          url: `https://endoflife.date/${name}`,
+          snippet: `发布 ${c.releaseDate || '?'} · 停止支持 ${c.eol === true ? '已停止' : (c.eol || '?')}${c.latest ? ' · 最新 ' + c.latest : ''}`,
+          source: 'endoflife.date',
+        })
+      }
+    }
+    return out.slice(0, 5)
+  } catch { return [] }
+}
+
+/** HuggingFace 镜像（官方站被墙，走 hf-mirror.com） */
+async function searchHuggingFace(q) {
+  try {
+    const r = await fetch(`https://hf-mirror.com/api/models?search=${encodeURIComponent(q)}&limit=5&sort=downloads&direction=-1`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+    if (!r.ok) return []
+    const j = await r.json()
+    return (Array.isArray(j) ? j : []).slice(0, 5).map((m) => ({
+      title: `${m.modelId || m.id || ''}${m.pipeline_tag ? ' — ' + m.pipeline_tag : ''}`,
+      url: `https://huggingface.co/${m.modelId || m.id || ''}`,
+      snippet: `下载 ${(m.downloads || 0).toLocaleString()} · ♥ ${m.likes || 0} · 更新 ${String(m.lastModified || '').slice(0, 10)}`,
+      source: 'huggingface.co',
+    })).filter((x) => x.title && x.url)
+  } catch { return [] }
+}
+
+/** GitHub Releases（查软件最新版本，GitHub 搜索只给仓库不给 release） */
+async function searchGithubReleases(q) {
+  try {
+    // 先搜仓库，再取第一个的 releases
+    const s = await fetch(`https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&per_page=1&sort=stars`,
+      { headers: { 'User-Agent': UA, Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(15000) })
+    if (!s.ok) return []
+    const sj = await s.json()
+    const repo = sj?.items?.[0]?.full_name
+    if (!repo) return []
+    const r = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=5`,
+      { headers: { 'User-Agent': UA, Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(15000) })
+    if (!r.ok) return []
+    const rel = await r.json()
+    return (Array.isArray(rel) ? rel : []).slice(0, 5).map((x) => ({
+      title: `${repo} ${x.tag_name || ''}${x.name && x.name !== x.tag_name ? ' — ' + String(x.name).slice(0, 40) : ''}`,
+      url: x.html_url || '',
+      snippet: `发布 ${String(x.published_at || '').slice(0, 10)}${x.prerelease ? ' · 预发布' : ''}`,
+      source: 'github.com',
+    })).filter((x) => x.url && x.title)
+  } catch { return [] }
+}
+
 /** 去重（按 URL），合并各源结果并按权威度排序 */
 function merge(results) {
   const seen = new Set()
@@ -671,6 +892,9 @@ function merge(results) {
 const VERTICAL_SOURCES = new Set([
   'arxiv.org', 'openalex.org', 'doi.org', 'pubmed.ncbi.nlm.nih.gov',
   'npmjs.com', 'pypi.org', 'developer.mozilla.org',
+  // 第二批（2026-10-03）：同样是「查不到会兜底返回热门内容」的源
+  'zenodo.org', 'doaj.org', 'europepmc.org', 'crates.io',
+  'nvd.nist.gov', 'endoflife.date', 'huggingface.co',
   // 通用但会兜底返回无关内容的源（实测 GitHub 搜中文词返回热门仓库）
   'github.com', 'stackoverflow.com',
 ])
@@ -708,9 +932,11 @@ export class SearchInfoTool extends Tool {
   constructor() {
     super({
       name: 'SearchInfo',
-      description: '多来源资料搜索：一次查 19 个源，返回资料卡（标题+摘要+来源+来源标注，按可信度排序）。'
+      description: '多来源资料搜索：一次查 27 个源，返回资料卡（标题+摘要+来源+来源标注，按可信度排序）。'
         + '通用源 12 个：Bing/百度/搜狗/360/B站/CSDN/掘金/V2EX/HackerNews/StackOverflow/GitHub/Mojeek；'
-        + '垂直源 7 个：arXiv/OpenAlex/Crossref/PubMed（学术）、npm/PyPI（包）、MDN（前端文档）——'
+        + '垂直源 15 个：学术（arXiv/OpenAlex/Crossref/PubMed/Zenodo/DOAJ/EuropePMC）、'
+        + '包（npm/PyPI/crates）、文档（MDN）、安全（NVD CVE）、运维（endoflife）、'
+        + '模型（HuggingFace 镜像）、版本（GitHub Releases）——'
         + '垂直源只在关键词落在其领域时才有结果（搜「周杰伦」arXiv 返回空是正常的），不抢通用源的位置。'
         + '返回资料卡 id 和条目列表，再用 Lookup({ card, index }) 打开某条抓全文。'
         + '关键词可以来自任何地方：用户直接问的问题、看图后提炼的特征、任务里需要查证的事实。'
@@ -759,25 +985,36 @@ export class SearchInfoTool extends Tool {
     if (!queries.length) return '需要 keywords（搜索关键词，字符串或数组）'
     try { mkdirSync(LOOKUP_DIR, { recursive: true }) } catch {}
 
-    /** 跑一个关键词的全部源（19 个源并发，失败源自己返回 [] 不拖垮整体）
+    /** 跑一个关键词的全部源（27 个源并发，失败源自己返回 [] 不拖垮整体）
      *  通用源 12 个：bing/baidu/sogou/360/bili/mojeek/csdn/juejin/v2ex/hn/so/gh
-     *  垂直源 7 个：arxiv/openalex/crossref/pubmed/npm/pypi/mdn
+     *  垂直源 15 个：
+     *    学术 —— arxiv/openalex/crossref/pubmed/zenodo/doaj/europepmc
+     *    包   —— npm/pypi/crates
+     *    文档 —— mdn
+     *    安全 —— nvd（CVE）
+     *    运维 —— endoflife（软件生命周期）
+     *    模型 —— huggingface（走镜像）
+     *    版本 —— github-releases
      *  —— 垂直源只在关键词落在其领域时才有结果（搜「周杰伦」arxiv 返回空是正常的），
      *     所以它们不抢位置，是「顺带捞一把」。
      */
     const runOne = async (q) => {
       const [bing, baidu, bili, mojeek, sogou, so360, csdn, juejin, v2ex, hn, so, gh,
-        arxiv, openalex, crossref, pubmed, npm, pypi, mdn] = await Promise.all([
+        arxiv, openalex, crossref, pubmed, npm, pypi, mdn,
+        zenodo, doaj, europepmc, crates, nvd, eol, hf, ghrel] = await Promise.all([
         searchBing(q), searchBaidu(q), searchBili(q), searchMojeek(q),
         searchSogou(q), searchSo360(q),
         searchCsdn(q), searchJuejin(q), searchV2ex(q),
         searchHackerNews(q), searchStackOverflow(q), searchGithub(q),
         searchArxiv(q), searchOpenAlex(q), searchCrossref(q),
         searchPubmed(q), searchNpm(q), searchPypi(q), searchMdn(q),
+        searchZenodo(q), searchDoaj(q), searchEuropePmc(q), searchCrates(q),
+        searchNvd(q), searchEndOfLife(q), searchHuggingFace(q), searchGithubReleases(q),
       ])
       return [...bing, ...baidu, ...bili, ...mojeek, ...sogou, ...so360,
         ...csdn, ...juejin, ...v2ex, ...hn, ...so, ...gh,
-        ...arxiv, ...openalex, ...crossref, ...pubmed, ...npm, ...pypi, ...mdn]
+        ...arxiv, ...openalex, ...crossref, ...pubmed, ...npm, ...pypi, ...mdn,
+        ...zenodo, ...doaj, ...europepmc, ...crates, ...nvd, ...eol, ...hf, ...ghrel]
     }
 
     // 多关键词之间也并行 —— 串行搜 4 个词要等 4 倍时间
