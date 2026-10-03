@@ -198,7 +198,7 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
   自定义风格放 \`.claude/output-styles/<名字>.md\`（项目级）或 \`~/.claude/output-styles/\`（用户级），文件名即风格名。
   \`/style off\` 回默认。风格本质是往系统提示词里加一段，**CLI 和 Web 各自注入**（两端都已实现）。
 - 其余命令速查（提示词早先遗漏，补上；具体用法用 \`/help <命令>\` 看）：
-  - 会话类：\`/save\` \`/load\` \`/resume\` \`/rename\` \`/delete\` \`/branch\` \`/rewind\` \`/undo\` \`/clear-restore\` \`/incognito\` \`/export\` \`/summary\`
+  - 会话类：\`/save\` \`/load\` \`/resume\` \`/rename\` \`/delete\` \`/branch\` \`/rewind\` \`/undo\` \`/clear-restore\` \`/incognito\` \`/export\` \`/summary\` \`/replay\`
   - 查询类：\`/cost\` \`/stats\` \`/context\` \`/files\` \`/errors\` \`/trace\` \`/doctor\` \`/tools\` \`/status\` \`/temperature\` \`/todos\` \`/tasks\` \`/team\` \`/away\` \`/agents\` \`/bg-status\` \`/bg-list\` \`/diff\`
   - 维护类：\`/compact\` \`/compact-threshold\` \`/compact-trash\` \`/trash\` \`/mem\` \`/memory\` \`/automem\` \`/skills\` \`/plugins\` \`/hooks\` \`/permissions\` \`/web\` \`/x11\` \`/check\` \`/review\` \`/workflow\` \`/retry\` \`/context7\`
   - 界面类：\`/board\` \`/keys\` \`/btw\` \`/deep\` \`/plan\` \`/watch\` \`/goal\` \`/coordinate\`（Web: \`/cowork\`）\`/me\` \`/palette\` \`/editor\` \`/exit\` \`/quit\`
@@ -229,6 +229,13 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
   启动时会自动静默检查一次（GitHub API 抓最新 tag 比对当前版本），有新版打**黄色提示**。
   更新走镜像下载 tar.gz 后**就地覆盖源码文件**；用户数据全在 \`~/.claude-code-mobile/\`，**不受影响**；
   被改动的文件会先备份到 \`~/.claude-code-mobile/update-backup/<tag>/\`。**更新完需 Ctrl+X 重启才生效。**
+- **/replay**（2026-10-03 加）：控制**进入会话时是否显示历史正文**。
+  \`/replay\` 看状态 · \`/replay on\` 显示（默认）· \`/replay off\` 不显示。
+  影响三条路径：Ctrl+X 重启续接、\`/resume <id>\`、\`/resume\`（无参）。
+  **关闭后的行为（用户明确要求「off 时也不要一行提示」）**：
+  · 重启续接 → 正文区**完全静默**，不画历史也不画 New Session Start 线
+  · /resume → 仍报告「已恢复会话（N 条消息）」（告诉用户切到哪了，不铺历史正文）
+  **对话内容本身完整保留**，只是不显示。存 \`config.replayHistory\`（默认 true）。
 
 # skill 也是 slash 命令（对齐官方）
 每个 skill 本身就是一个可直接敲的 slash 命令 —— 用户输 \`/termux-video\`、\`/anti-ai-slop\` 就会展开那个 skill，
