@@ -9,6 +9,7 @@ import { buildCommandTable } from './core/cmd-registry.mjs'
 import { providerAddSteps, applyProviderAdd } from './core/wizard-steps.mjs'
 import { makeMarkdownCommand } from './core/cmd-markdown.mjs'
 import { makeUpdateCommand } from './core/cmd-update.mjs'
+import { makeReplayCommand } from './core/cmd-replay.mjs'
 import { makeStyleCommand } from './core/cmd-style.mjs'
 import { makeDeviceCommand } from './core/cmd-device.mjs'
 import * as deviceChannel from './core/device.mjs'
@@ -2504,8 +2505,14 @@ async function main() {
   // 对齐官方：恢复的上下文要画到屏幕上，不能只塞进 agent.messages。
   // 攒成行、等 fsSession.start() 之后再写（enter() 会清屏，先写会被擦掉）。
   // 只在重启路径回放：手动启动是新对话，本来就没历史可放。
+  //
+  // 【/replay off 可关】2026-10-03 用户要求「有的人可能不想看上面这段历史，
+  // 用 slash 命令控制以后进入会话显示不显示历史消息」。
+  // 三处回放点（此处 + cmd-queries 的两处 /resume）都要受 config.replayHistory 控制，
+  // 只改一处会出现「关了这里还显示」的不一致。默认 true（保持原行为）。
   const resumedReplayLines = (() => {
     if (!resumed) return []
+    if (config.replayHistory === false) return []
     try {
       const msgs = Array.isArray(resumed.messages) ? resumed.messages : []
       if (!msgs.length) return []
@@ -2722,7 +2729,9 @@ async function main() {
     tryResume: () => tryResume(),
     // 历史回放：把恢复的会话画到屏幕上（对齐官方 REPL.tsx:1182）。
     // 只返回字符串，由调用方统一 emit —— 命令模块不直接写 stdout。
-    replayHistory: (messages) => formatHistoryForReplay(messages, { C }).join('\n'),
+    // /resume 的历史回放（用户可用 /replay off 关闭）。
+    // 关时返回空串，调用方拼出来就是「已恢复会话（N 条消息）」一行，没有历史正文。
+    replayHistory: (messages) => (config.replayHistory === false ? '' : formatHistoryForReplay(messages, { C }).join('\n')),
     // 新会话起点线（/new 用）：和启动路径的 New Session Start 保持一致
     sessionDividerLines: () => sessionDivider(C, 'New Session Start', { leadingBlank: false }),
 
@@ -2931,6 +2940,9 @@ async function main() {
     cliVersion: CLI_VERSION,
     projectDir: PROJECT_DIR,
   })
+
+  // /replay —— 控制进入会话时是否显示历史（2026-10-03）
+  const replayCommand = makeReplayCommand({ C, config, saveConfig })
 
   const handleCommand = async (input, cmd, name, args) => {
     // args 一律归一成**数组**（按空白拆）。
@@ -4196,6 +4208,10 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
         return await updateCommand.update(args)
 
 
+      case 'replay':
+        return replayCommand.replay(args)
+
+
       case 'keepalive':
         return await miscCommands.keepalive(args)
 
@@ -4323,7 +4339,7 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
 
   // 内置命令名单。skill 分发要用它判断「这个名字是不是已被内置命令占用」——
   // 内置优先，避免某个 skill 恰好叫 config/help 就把内置命令顶掉。
-  const BUILTIN_COMMANDS = ['help','agents','cost','cache','context','context7','diff','doctor','review','trace','workflow','stats','todos','goal','plan','deep','coordinate','cowork','watch','qq','undo','rewind','retry','branch','export','skills','memory','automem','permissions','bg-status','bg-list','tasks','team','exit','quit','clear','new','incognito','model','url','name','key','protocol','compact','compact-threshold','compact-trash','save','load','resume','rename','delete','copy','image','editor','add-dir','workspace','clear-restore','config','trash','keepalive','palette','web','greeting','board','keys','btw','files','status','summary','statusline','mem','font','check','plugins','x11','hooks','tools','errors','away','temperature','imagegen','mail','effort','style','me','github','voice','mcp','pexels','markdown','device','update']
+  const BUILTIN_COMMANDS = ['help','agents','cost','cache','context','context7','diff','doctor','review','trace','workflow','stats','todos','goal','plan','deep','coordinate','cowork','watch','qq','undo','rewind','retry','branch','export','skills','memory','automem','permissions','bg-status','bg-list','tasks','team','exit','quit','clear','new','incognito','model','url','name','key','protocol','compact','compact-threshold','compact-trash','save','load','resume','rename','delete','copy','image','editor','add-dir','workspace','clear-restore','config','trash','keepalive','palette','web','greeting','board','keys','btw','files','status','summary','statusline','mem','font','check','plugins','x11','hooks','tools','errors','away','temperature','imagegen','mail','effort','style','me','github','voice','mcp','pexels','markdown','device','update','replay']
   const BUILTIN_COMMAND_NAMES = new Set(BUILTIN_COMMANDS)
 
   /**
@@ -5047,12 +5063,17 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
       for (const line of resumedReplayLines) fsSession.writeLine(line)
       fsSession.flushRender()
     } catch {}
-  } else {
+  } else if (!resumed) {
     // ── 新对话：标出会话起点（2026-10-03 用户要求）──
     // 对齐恢复路径的「Session Recovery」线：全新对话没有历史可回放，
     // 但同样需要一条视觉起点 —— 否则启动后正文区一片空白，
     // 用户不知道"从哪开始算这次对话"。
     // 只在新会话时画（手动启动 or /new）；恢复路径上面已经画了 Recovery 线。
+    //
+    // 【2026-10-03 修】原来条件是 `else`（只要没有回放行就画），
+    // 于是 /replay off 时——那是有历史、只是用户不想看——也被当成新对话，
+    // 画了一条 New Session Start，自相矛盾。用户要求「off 时也不要一行提示」。
+    // 现在显式判断 !resumed：只有真的没有恢复会话才是新对话。
     try {
       for (const line of sessionDivider(C, 'New Session Start', { leadingBlank: false })) {
         fsSession.writeLine(line)
