@@ -42,6 +42,7 @@ import { makeSessionExtraCommands } from './cmd-session-extra.mjs'
 import { makeMarkdownCommand } from './cmd-markdown.mjs'
 import { makeStyleCommand } from './cmd-style.mjs'
 import { makeUpdateCommand } from './cmd-update.mjs'
+import { makeReplayCommand } from './cmd-replay.mjs'
 import { makeDeviceCommand } from './cmd-device.mjs'
 
 /**
@@ -199,6 +200,9 @@ export function buildCommandTable(ctx, options = {}) {
 
   // /update —— 版本检查与一键更新（镜像下载，不覆盖用户数据）
   merge('cmd-update', () => makeUpdateCommand(ctx))
+
+  // /replay —— 控制进入会话时是否显示历史（2026-10-03）
+  merge('cmd-replay', () => makeReplayCommand(ctx))
   merge('cmd-session-extra', () => makeSessionExtraCommands(ctx))
 
   // /device —— 设备 shell 通道（Shizuku / adb）
