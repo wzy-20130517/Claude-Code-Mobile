@@ -42,6 +42,7 @@ export class ReadLine {
     this.onHistoryUp = null      // 处理中接管 Ctrl+P：翻上一条排队消息
     this.onHistoryDown = null    // 处理中接管 Ctrl+N：翻下一条排队消息
     this.onQueueDelete = null    // 处理中接管 Ctrl+G：删除当前翻到的排队消息
+    this.onQueueSend = null      // 处理中接管 Ctrl+S：把当前翻到的排队消息立刻发出去
     this.multiline = false
     this.multilineBuffer = ''
     this.collapsedPaste = null
@@ -701,6 +702,21 @@ export class ReadLine {
       // 不要顺手把它做成「清空当前行」—— Ctrl+C 已经能清行，重复功能还会破坏该约定。
       case 'g':
         if (this.onQueueDelete) this.onQueueDelete()
+        break
+      // Ctrl+S：把当前翻到的排队消息【立刻发出去】（2026-10-03 用户要求）。
+      //
+      // 【解决什么】排队消息原来是「等当前轮跑完才轮到它」。
+      // 但有时候用户排的那条更急（比如「停一下，改个方向」），
+      // 干等前一轮跑完可能要好几分钟。
+      //
+      // 【和 Ctrl+C 的区别】Ctrl+C 是打断当前轮再放行队列，
+      // Ctrl+S 是**不打断当前轮**、把指定那条插到队首优先执行。
+      // 两者互补：不想中断当前工作、但想让某条先跑时用 Ctrl+S。
+      //
+      // 【为什么选 s】a/e/i/p/n/f/d/k/u/w/r/l/j/g/c/t/y/o 都已占用
+      // （见下方看板注释里的键位表）。s = Send，语义贴切。
+      case 's':
+        if (this.onQueueSend) this.onQueueSend()
         break
       case 'a': // 行首
         this.cursor = 0
