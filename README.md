@@ -75,7 +75,8 @@ Claude Code Mobile（简称 CCM）是一个**运行在 Android 手机上的命�
 ### 🔌 扩展性
 
 - **MCP 支持**：接入任意 Model Context Protocol 服务器（Playwright、邮件、通知等）
-- **Skills 系统**：可插拔的技能包（动画设计、UI 库选择、视频制作等）
+- **Skills 系统**：可插拔的技能包——放 `skills/<名字>/SKILL.md` 即生效，
+  也可放 `~/.claude/skills/`（全局）
 - **自定义命令**：`.claude/commands/*.md` 手写 slash 命令
 - **自定义 Agent**：`.claude/agents/*.md` 定义专属角色（CTO/QA/产品经理…）
 - **Hooks 系统**：SessionStart / PreToolUse / PostToolUse / Stop 等事件钩子
@@ -215,7 +216,7 @@ pkg install termux-api
 | `/voice` | 正文语音朗读开关与音色 |
 | `/say <文本>` | 让 AI 主动语音播报 |
 
-**共 91 个内置命令**（上表只列了常用的），另有 9 个内置技能包。
+**共 91 个内置命令**（上表只列了常用的）。
 按 `/help` 看全部，`/help <主题>` 看详细说明，`/palette` 开模糊搜索面板。
 
 ### 快捷键
@@ -257,7 +258,6 @@ claude-code-mobile/
 │   ├── server.mjs         # HTTP/SSE 服务
 │   └── src/               # 前端源码
 │
-├── skills/                # 内置技能包
 ├── tools/                 # 辅助脚本（MCP server、备份 worker 等）
 ├── assets/                # 字体等静态资源
 └── docs/                  # 开发文档
@@ -382,6 +382,16 @@ MIT
 
 ## 致谢
 
-- 交互设计与工具协议参考 [Anthropic Claude Code](https://claude.com/claude-code)
-- 手机操作架构参考 [agent-mobile-use](https://github.com/AcidGr/agent-mobile-use)
-- 终端 UI 设计参考 [Kimi Code](https://kimi.moonshot.cn/)
+本项目的设计与实现参考了以下开源项目（按首字母排序）：
+
+- [agent-mobile-use](https://github.com/AcidGr/agent-mobile-use) —— 手机操作架构（虚拟副屏 + 元素树快照）
+- [Anthropic Claude Code](https://claude.com/claude-code) —— 交互设计、工具协议、Agent 架构
+- [Codex](https://github.com/openai/codex) —— CLI 交互细节、prompt cache 实践
+- [grok-build](https://github.com/xai-org/grok-build) —— hashline 行锚点编辑（HashlineEdit 工具的设计来源）
+- [Kimi Code](https://kimi.moonshot.cn/) —— 终端 UI 设计、工具输出窗口
+- [openclaw](https://github.com/openclaw/openclaw) —— Agent 编排与工具抽象
+- [opencode](https://github.com/sst/opencode) —— 会话管理与命令系统
+
+感谢这些项目的作者与社区。
+
+> 注：本项目为**独立实现**，与上述项目均无隶属关系，也未包含它们的代码。
