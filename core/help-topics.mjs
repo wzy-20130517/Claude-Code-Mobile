@@ -114,8 +114,8 @@ GitHub
 /retry            回到上次报错前并带报错重跑
 /trash            回收站：restore <序号> / clear
 /btw <问题>        顺嘴问一句，不打断主对话、不进主上下文
-/replay           进入会话时是否显示历史（on|off，默认显示）
-                  关后：重启续接完全静默；/resume 只报告切到哪个会话
+/replay           进入会话时是否显示历史（on|off，默认不显示）
+                  想看历史用 /replay on；关时重启续接完全静默
 
 自动行为：每 30 秒自动保存，启动默认新对话（Ctrl+X 重启则续接当前会话）`,
 
@@ -215,7 +215,7 @@ Ctrl+P/N             处理中翻排队消息（选中后回车写回；改字=�
       enable|disable <名字>           启/禁用（disable 立即停进程，enable 需重启）
 /pexels   图库搜索 key（FindImage 用）
       set <key> / test / clear        test 会显示剩余额度
-/keepalive  息屏保活（on|off|auto on|auto off）
+/keepalive  息屏保活（on|off|auto on|auto off，自动保活默认开）
 /device   手机 Shell 通道 / 虚拟副屏 / 操作模式
       /device                    看总览（通道探测 + 副屏 + 模式）
       shell auto|shizuku|adb     选通道（默认 auto：试 shizuku，失败落 adb）
