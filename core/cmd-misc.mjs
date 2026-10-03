@@ -50,7 +50,7 @@ export function makeMiscCommands(ctx) {
             ctx.saveConfig(ctx.config)
             return '自动保活已关闭 ✓\n当前已在播放的静音音频不会被停止；要立刻停用请执行 /keepalive off'
           }
-          return `自动保活: ${ctx.config.keepaliveAuto === true ? '开启 ✓' : '关闭（默认，省电）'}\n  /keepalive auto on   每次启动时自动开启静音音频\n  /keepalive auto off  关闭启动自动保活`
+          return `自动保活: ${ctx.config.keepaliveAuto !== false ? '开启 ✓（默认）' : '关闭'}\n  /keepalive auto on   每次启动时自动开启静音音频\n  /keepalive auto off  关闭启动自动保活`
         }
         // /keepalive on  — 开启静音音频保活（息屏不断流，费电）
         if (args[0] === 'on') {
@@ -78,7 +78,7 @@ export function makeMiscCommands(ctx) {
         return `保活状态:
   主进程 wake-lock: ${wake}
   静音音频保活: ${audio}
-  启动自动保活: ${ctx.config.keepaliveAuto === true ? '开启 ✓（每次启动自动播放）' : '关闭（默认，省电）'}
+  启动自动保活: ${ctx.config.keepaliveAuto !== false ? '开启 ✓（默认，每次启动自动播放）' : '关闭'}
   电池优化白名单: ${whitelistStr}
 
 静音音频保活（治息屏断流，但费电）:
