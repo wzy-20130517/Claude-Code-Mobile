@@ -11,10 +11,12 @@
 //   3. /resume（无参）   → cmd-queries.mjs 上一个会话分支
 // 三处都要受这个开关控制，只改一处会出现「关了这里还显示」的不一致。
 //
-// 【默认值】true（显示）—— 这是原有行为，不该因为加开关就改变默认体验。
+// 【默认值】**关**（2026-10-03 用户拍板：「replayHistory 默认关吧」）。
+// 考虑：进入会话时先铺一屏历史会刷屏，想要的人自己 /replay on 开更合理。
 //
 // 【配置字段】config.replayHistory（布尔）
 // 放在顶层而不是 per-provider：这是纯显示偏好，跟模型/端点无关。
+// 判断用 `=== true`（不是 `!== false`）：未设置 = 关。
 
 /**
  * @param {object} ctx
@@ -28,8 +30,8 @@ export function makeReplayCommand(ctx) {
       const sub = String(args[0] || '').trim().toLowerCase()
       const config = ctx.config
 
-      // 默认 true：只有显式 false 才算关闭
-      const isOn = () => config.replayHistory !== false
+      // 默认关：只有显式 true 才算开启（2026-10-03 用户拍板）
+      const isOn = () => config.replayHistory === true
 
       // ── 无参 / status / show：查看状态 ──────────────
       if (!sub || sub === 'status' || sub === 'show') {
@@ -43,6 +45,8 @@ export function makeReplayCommand(ctx) {
           on
             ? `末尾用 ── Session Recovery ── 分隔线标出「从这里开始是新对话」。${C.reset}`
             : `重启续接完全静默；/resume 仍会告诉你切到了哪个会话。${C.reset}`,
+          '',
+          `${C.dim}当前是默认值（关）—— 想看历史用 /replay on 打开。${C.reset}`,
           '',
           `切换: ${C.dim}/replay on${C.reset} 显示 · ${C.dim}/replay off${C.reset} 不显示`,
           `${C.dim}只影响「进入会话那一刻」的显示，对话本身完整保留。${C.reset}`,
