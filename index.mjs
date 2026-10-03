@@ -8,6 +8,7 @@ import { runWizard, withNonInteractive, isNonInteractive } from './core/wizard.m
 import { buildCommandTable } from './core/cmd-registry.mjs'
 import { providerAddSteps, applyProviderAdd } from './core/wizard-steps.mjs'
 import { makeMarkdownCommand } from './core/cmd-markdown.mjs'
+import { makeUpdateCommand } from './core/cmd-update.mjs'
 import { makeStyleCommand } from './core/cmd-style.mjs'
 import { makeDeviceCommand } from './core/cmd-device.mjs'
 import * as deviceChannel from './core/device.mjs'
@@ -56,7 +57,7 @@ import { CronCreateTool, CronListTool, CronDeleteTool } from './core/tools-cron.
 import { startCronScheduler, missedOneShots, deleteCronTask } from './core/cron.mjs'
 import { runNonInteractive } from './core/noninteractive.mjs'
 import { killAllChildren } from './core/pty.mjs'
-import { DATA_DIR, migrateLegacyData, resolveConfigPath, HOOKS_PATH, MCP_PATH } from './core/paths.mjs'
+import { DATA_DIR, migrateLegacyData, resolveConfigPath, HOOKS_PATH, MCP_PATH, PROJECT_DIR } from './core/paths.mjs'
 import { ReadLine } from './core/readline.mjs'
 import { InputHistory, CommandExecTool, UserInputHistoryTool, MemoryTool, NON_INTERACTIVE_HINTS } from './core/agent-tools.mjs'
 import { cmdAgents } from './core/cmd-agents.mjs'
@@ -2922,6 +2923,15 @@ async function main() {
   // /device —— 设备 shell 通道（Shizuku / adb），CLI/Web 共用 core/cmd-device.mjs
   const deviceCommand = makeDeviceCommand({ device: deviceChannel })
 
+  // /update —— 版本检查与一键更新（镜像下载，不覆盖用户数据）
+  const updateCommand = makeUpdateCommand({
+    C,
+    config,
+    saveConfig,
+    cliVersion: CLI_VERSION,
+    projectDir: PROJECT_DIR,
+  })
+
   const handleCommand = async (input, cmd, name, args) => {
     // args 一律归一成**数组**（按空白拆）。
     //
@@ -4182,6 +4192,10 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
         return markdownCommand.markdown(args)
 
 
+      case 'update':
+        return await updateCommand.update(args)
+
+
       case 'keepalive':
         return await miscCommands.keepalive(args)
 
@@ -4309,7 +4323,7 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
 
   // 内置命令名单。skill 分发要用它判断「这个名字是不是已被内置命令占用」——
   // 内置优先，避免某个 skill 恰好叫 config/help 就把内置命令顶掉。
-  const BUILTIN_COMMANDS = ['help','agents','cost','cache','context','context7','diff','doctor','review','trace','workflow','stats','todos','goal','plan','deep','coordinate','cowork','watch','qq','undo','rewind','retry','branch','export','skills','memory','automem','permissions','bg-status','bg-list','tasks','team','exit','quit','clear','new','incognito','model','url','name','key','protocol','compact','compact-threshold','compact-trash','save','load','resume','rename','delete','copy','image','editor','add-dir','workspace','clear-restore','config','trash','keepalive','palette','web','greeting','board','keys','btw','files','status','summary','statusline','mem','font','check','plugins','x11','hooks','tools','errors','away','temperature','imagegen','mail','effort','style','me','github','voice','mcp','pexels','markdown','device']
+  const BUILTIN_COMMANDS = ['help','agents','cost','cache','context','context7','diff','doctor','review','trace','workflow','stats','todos','goal','plan','deep','coordinate','cowork','watch','qq','undo','rewind','retry','branch','export','skills','memory','automem','permissions','bg-status','bg-list','tasks','team','exit','quit','clear','new','incognito','model','url','name','key','protocol','compact','compact-threshold','compact-trash','save','load','resume','rename','delete','copy','image','editor','add-dir','workspace','clear-restore','config','trash','keepalive','palette','web','greeting','board','keys','btw','files','status','summary','statusline','mem','font','check','plugins','x11','hooks','tools','errors','away','temperature','imagegen','mail','effort','style','me','github','voice','mcp','pexels','markdown','device','update']
   const BUILTIN_COMMAND_NAMES = new Set(BUILTIN_COMMANDS)
 
   /**
@@ -6537,6 +6551,29 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
 
   // 启动定时任务调度（依赖 pendingInputs/processInput，必须在它们定义后）
   try { initCronScheduler() } catch {}
+
+  // 启动时静默检查更新（2026-10-03 用户要求）。
+  //
+  // 【为什么异步 fire-and-forget】不能阻塞启动：GitHub API 可能慢/不通，
+  // 用户不该为了一个提示等几秒。所以后台跑，有结果了再打提示。
+  // 【为什么延迟 1.2 秒】让欢迎屏先画完，提示打在它下面更自然；
+  // 且刚启动时终端可能还在初始化，太早输出会被覆盖。
+  // 【失败静默】网络不通/限流/无 release 一律不打扰用户（fetchLatestVersion 内部已 catch）。
+  setTimeout(() => {
+    ;(async () => {
+      try {
+        const { checkForUpdate } = await import('./core/version-check.mjs')
+        const info = await checkForUpdate(CLI_VERSION, { timeout: 6000 })
+        if (!info?.hasUpdate) return
+        // 黄色提示（对齐用户要求的「弹个黄色提示」）
+        const msg = `\n${C.yellow}⬆ 发现新版本 ${info.latest}（当前 ${info.current}）${C.reset}\n`
+          + `${C.dim}  更新: /update    仅查看: /update check${C.reset}\n`
+          + `${C.dim}  ${info.url}${C.reset}\n`
+        try { if (rl.printAbove) rl.printAbove(msg); else process.stderr.write(msg) }
+        catch { try { process.stderr.write(msg) } catch {} }
+      } catch {}
+    })()
+  }, 1200)
 
   process.stdin.on('data', (data) => {
     // 全屏模式开了鼠标追踪，滑屏/滚轮会送来 SGR 序列 CSI <btn;col;row M|m。
