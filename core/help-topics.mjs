@@ -224,6 +224,12 @@ Ctrl+P/N             处理中翻排队消息（选中后回车写回；改字=�
       mode 主屏|副屏|选择        设了就固定用那个屏、不再弹选择；
                                  「选择」= 每次用手机工具都问你；off 清掉偏好
 /x11 on|off|status  浏览器是否拉起 Termux:X11（off 时仍起后台 X server，可手动开 APP 盯）
+/update   检查并更新到最新版（从镜像下载，不覆盖用户数据）
+      /update                  检查 + 更新（更新完按 Ctrl+X 重启生效）
+      /update check            只看有没有新版，不下载
+      /update mirror <url>     设置镜像前缀（默认 gh-proxy.com）
+      /update mirror off       直连 GitHub（国内可能不通）
+      启动时会自动静默检查，有新版会打黄色提示
 /add-dir <路径>     添加工作目录
 /workspace [路径]   查看/设置工作区（默认 /sdcard/Download/claude-workspace）
 
@@ -270,4 +276,5 @@ export const HELP_TOPIC_ALIASES = {
   compact: 'context', memory: 'context', mem: 'context',
   save: 'session', load: 'session', resume: 'session', rewind: 'session',
   font: 'ui', board: 'ui', statusline: 'ui', keys: 'ui', editor: 'ui', markdown: 'ui',
+  update: 'ext',
 }
