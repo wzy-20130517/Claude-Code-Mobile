@@ -5801,9 +5801,77 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
         rawText = bodyText
       }
     }
-    const input = rawText
+    // 用 let：下面 /image 会被改写成 @路径 形式（见「/image 拦截」段）
+    let input = rawText
     rl.reset()
     rl.setPrompt(promptStr)
+
+    // ── /image：不进 slash 捕获，当普通用户消息走 ─────────────────
+    //
+    // 用户 2026-10-03 要求：「让 image 命令不进入 slash 捕获，因为它们其实是用户消息」。
+    // 原来 /image 走 handleCommand，副作用有三：
+    //   ① 进 command 历史（inputHistory.add('command')）而非 message 历史
+    //   ② 不触发 CLI→QQ 同步（slash 分支 return 得早，走不到 flushSync）
+    //   ③ 另起一套解析（case 'image'），跟「普通消息里打图片路径」是两条链路
+    // 现在在入口处解析成「图片路径 + 说明」，改写成 @路径 形式再放行：
+    //   首字符不是 / → 下面的 slash 判定不命中 → 一路走普通消息路径
+    //   （多模态注入 / message 历史 / QQ 同步全部自动获得）。
+    // /image list 例外：纯查询（列最近 10 张），仍交给命令系统。
+    //
+    // @ 前缀的用意：绝对路径以 / 开头，若直接拼进去会被 startsWith('/') 再次
+    // 当成命令；而 @ 正是 extractImagePathsFromText 认的引用语法（会剥离 @ 再解析）。
+    //
+    // 回显与历史仍用用户敲的原文（userInputDisplay）：/image 的语义是「发最新」，
+    // 存成 @路径 会变成「发这张旧图」，语义漂移；而且「我没敲这个」会让人困惑。
+    const userInputDisplay = input
+    if (/^\/image(\s|$)/.test(input) && !/^\/image\s+(list|ls)\b/.test(input)) {
+      const argStr = input.slice('/image'.length).trim()
+      const parsed = extractImagePathsFromText(argStr)
+      let imgPaths = parsed.paths.slice()   // 支持多张（/image a.png,b.png 或 /image 1,2）
+      let imgNote = parsed.text || ''
+      // 序号 → 最近第 N 张（支持多个：/image 1,3）
+      if (parsed.indexes.length > 0) {
+        const list = recentImages(10)
+        if (!list.length) {
+          emit(`${C.yellow}最近没有找到图片（扫描: 截图/QQ/Download/微信）${C.reset}\n`)
+          showPrompt()
+          if (fsSession) fsSession.flushRender()
+          return
+        }
+        const bad = parsed.indexes.filter(n => n < 1 || n > list.length)
+        if (bad.length) {
+          emit(`${C.yellow}序号超出范围（1-${list.length}）: ${bad.join(', ')}，用 /image list 查看${C.reset}\n`)
+          showPrompt()
+          if (fsSession) fsSession.flushRender()
+          return
+        }
+        for (const n of parsed.indexes) imgPaths.push(list[n - 1].path)
+      }
+      // 无路径也无序号（含纯说明）→ 取最近一张；剩下的整串当说明
+      if (imgPaths.length === 0) {
+        const latest = findLatestImage()
+        if (!latest) {
+          emit(`${C.yellow}未找到最近的图片（扫描: 截图/QQ/Download/微信）${C.reset}\n`)
+          showPrompt()
+          if (fsSession) fsSession.flushRender()
+          return
+        }
+        imgPaths = [latest]
+        if (!imgNote) imgNote = argStr
+      }
+      if (incognitoMode && imgPaths.some(p => isProtectedPath(p))) {
+        emit(`${C.yellow}Incognito 禁止读取 claude-code-mobile${C.reset}\n`)
+        showPrompt()
+        if (fsSession) fsSession.flushRender()
+        return
+      }
+      // 去重保序
+      imgPaths = [...new Set(imgPaths)]
+      // 改写成 @路径 [@路径...] [说明]；无说明就只发图，不补任何默认话术
+      const pathPart = imgPaths.map(p => `@${p}`).join(' ')
+      input = imgNote ? `${pathPart} ${imgNote}` : pathPart
+    }
+
     // 空输入：全屏模式下必须 flushRender，否则输入框不会被清空（rl.reset 只清内存）
     if (!input) {
       if (fsSession) fsSession.flushRender()
@@ -5848,7 +5916,9 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
       // 我们这里背景色只到字的结尾」。
       //
       // 现在改成宽度取整屏（cols），短行用空格补满 —— 视觉与官方一致。
-      const rawRows = String(input).split('\n')
+      // 回显用 userInputDisplay（用户敲的原文）而不是 input：/image 已被改写成
+      // @路径，显示原文才符合「我发的是什么」，也避免路径刷屏。
+      const rawRows = String(userInputDisplay).split('\n')
       // 每行左边留 3 列：前导空格 + ❯ + 空格（续行用等宽空格，只有首行画箭头）
       const HEAD_W = 3
       const cols = Math.max(20, process.stdout.columns || 80)
@@ -6103,9 +6173,11 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
     }
 
     // goalDrive 的输入是程序生成的契约指令（很长一段），不是用户敲的，不进历史
+    // 记录用 userInputDisplay（原文）：/image 已被改写成 @路径，
+    // 存原文才能让 ↑ 键翻出「/image 3」而不是「@/sdcard/.../x.png」。
     if (!opts.goalDrive) {
-      inputHistory.add('message', input)
-      rl.addHistory(input)
+      inputHistory.add('message', userInputDisplay)
+      rl.addHistory(userInputDisplay)
     }
     taskState.begin(input, { id: `cli-${myEpoch}` })
     startHiddenThinkingTimer()
@@ -6164,7 +6236,9 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
           if (visionEnabled()) {
             // 原图直入：走跟 /image 同一条 buildMultimodalUserContent
             try {
-              const mm = buildMultimodalUserContent(imgText || input, absPaths)
+              // 只传说明文字，不兜底 input（2026-10-03 用户要求：没说明就纯图，
+              // 不带任何文本块）。原来 imgText||input 会把「@路径」本身当正文发出去。
+              const mm = buildMultimodalUserContent(imgText, absPaths)
               multimodalContent = mm.content
               emit(`${C.dim}[识图] ${mm.loaded.map(p => p.split('/').pop()).join(', ')}${C.reset}\n`)
             } catch (imgErr) {
@@ -6183,7 +6257,8 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
                 ocrParts.push(`【图片 ${abs} OCR 失败】${ocrErr.message}`)
               }
             }
-            multimodalContent = [imgText || input, ...ocrParts].filter(Boolean).join('\n\n')
+            // 同上：无说明时只保留 OCR 文字，不塞原始 input
+            multimodalContent = [imgText, ...ocrParts].filter(Boolean).join('\n\n')
             emit(`${C.dim}[识图-转述] ${loaded.join(', ') || absPaths.join(', ')}${C.reset}\n`)
           }
         }

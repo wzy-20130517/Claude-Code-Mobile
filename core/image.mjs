@@ -372,11 +372,15 @@ export function extractImagePathsFromText(input) {
 
 /**
  * 组装多模态 user content 数组（text + images）
- * text 可空：默认「请描述这张图片」
+ *
+ * text 为空时**不补任何默认提示**（2026-10-03 用户要求）。
+ * 原来会塞一句「请查看这些图片并说明要点。」——用户只发图就是想让你看图，
+ * 自动加的那句话既不是他说的、又会让模型以为有什么"要点"要交代，
+ * 属于替用户说话。空就是空，只有图片块。
  */
 export function buildMultimodalUserContent(text, imagePaths) {
   const content = []
-  const t = (text || '').trim() || (imagePaths?.length ? '请查看这些图片并说明要点。' : '')
+  const t = (text || '').trim()
   if (t) content.push({ type: 'text', text: t })
   const loaded = []
   for (const p of imagePaths || []) {
