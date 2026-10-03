@@ -202,7 +202,7 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
   - 查询类：\`/cost\` \`/stats\` \`/context\` \`/files\` \`/errors\` \`/trace\` \`/doctor\` \`/tools\` \`/status\` \`/temperature\` \`/todos\` \`/tasks\` \`/team\` \`/away\` \`/agents\` \`/bg-status\` \`/bg-list\` \`/diff\`
   - 维护类：\`/compact\` \`/compact-threshold\` \`/compact-trash\` \`/trash\` \`/mem\` \`/memory\` \`/automem\` \`/skills\` \`/plugins\` \`/hooks\` \`/permissions\` \`/web\` \`/x11\` \`/check\` \`/review\` \`/workflow\` \`/retry\` \`/context7\`
   - 界面类：\`/board\` \`/keys\` \`/btw\` \`/deep\` \`/plan\` \`/watch\` \`/goal\` \`/coordinate\`（Web: \`/cowork\`）\`/me\` \`/palette\` \`/editor\` \`/exit\` \`/quit\`
-  - 集成类：\`/context7\`（Context7 MCP：setup/enable/disable/status）、\`/x11\`（浏览器是否拉起 Termux:X11）
+  - 集成类：\`/context7\`（Context7 MCP：setup/enable/disable/status）、\`/x11\`（浏览器是否拉起 Termux:X11）、\`/update\`（见下）
   - 配置类：\`/config\` \`/model\` \`/url\` \`/key\` \`/name\` \`/protocol\` \`/effort\` \`/cache\` \`/voice\` \`/statusline\` \`/font\` \`/markdown\` \`/style\` \`/greeting\` \`/keepalive\` \`/imagegen\` \`/mail\` \`/mcp\` \`/pexels\` \`/github\` \`/qq\`
   - 手机类：\`/device\`（Shell 通道 + 虚拟副屏 + 手机操作模式，见下）
   - 文件与输入类：\`/copy\` \`/image <路径> [说明]\` \`/add-dir <路径>\` \`/workspace [路径]\`
@@ -224,6 +224,11 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
   改的是 mcp.json 的 disabled 字段。注意 MCP **工具**不做成 slash 命令，它们走 mcp_<server>_<tool> 工具通道。
 - **/pexels**：管理 FindImage 用的图库 key。\`/pexels\` 看状态、\`set <key>\` 配置（写 ~/.claude-code-mobile/.env，当前会话立即生效）、
   \`test\` 测连通性和剩余额度、\`clear\` 清空。免费额度 200 次/小时、20000 次/月。
+- **/update**（2026-10-03 加）：检查并更新到最新版。
+  \`/update\` 检查+更新 · \`/update check\` 只看有没有新版 · \`/update mirror <url>\` 设镜像前缀（默认 gh-proxy.com）。
+  启动时会自动静默检查一次（GitHub API 抓最新 tag 比对当前版本），有新版打**黄色提示**。
+  更新走镜像下载 tar.gz 后**就地覆盖源码文件**；用户数据全在 \`~/.claude-code-mobile/\`，**不受影响**；
+  被改动的文件会先备份到 \`~/.claude-code-mobile/update-backup/<tag>/\`。**更新完需 Ctrl+X 重启才生效。**
 
 # skill 也是 slash 命令（对齐官方）
 每个 skill 本身就是一个可直接敲的 slash 命令 —— 用户输 \`/termux-video\`、\`/anti-ai-slop\` 就会展开那个 skill，
