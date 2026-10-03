@@ -114,6 +114,8 @@ GitHub
 /retry            回到上次报错前并带报错重跑
 /trash            回收站：restore <序号> / clear
 /btw <问题>        顺嘴问一句，不打断主对话、不进主上下文
+/replay           进入会话时是否显示历史（on|off，默认显示）
+                  关后：重启续接完全静默；/resume 只报告切到哪个会话
 
 自动行为：每 30 秒自动保存，启动默认新对话（Ctrl+X 重启则续接当前会话）`,
 
@@ -276,5 +278,5 @@ export const HELP_TOPIC_ALIASES = {
   compact: 'context', memory: 'context', mem: 'context',
   save: 'session', load: 'session', resume: 'session', rewind: 'session',
   font: 'ui', board: 'ui', statusline: 'ui', keys: 'ui', editor: 'ui', markdown: 'ui',
-  update: 'ext',
+  update: 'ext', replay: 'session',
 }
