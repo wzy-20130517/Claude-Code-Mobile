@@ -101,6 +101,23 @@ function cleanForSpeech(raw) {
   s = s.replace(/`([^`]+)`/g, '$1')
   s = s.replace(/\*\*([^*]+)\*\*/g, '$1')
   s = s.replace(/\*([^*]+)\*/g, '$1')
+  // ── 孤立标记兜底（2026-10-03 加）───────────────────────
+  //
+  // 【为什么需要】分句发生在清理**之前**（drainSentences 先切句、
+  // enqueueSentence 再清理）。而 `**加粗**` 常常跨句号：
+  //
+  //   原文：**47 个模型，分三类。**挑几个有意思的实测：
+  //   分句：["**47 个模型，分三类。", "**挑几个有意思的实测："]
+  //          ↑ 前半带 **，后半也带 **
+  //
+  // 两边各剩一半 `**`，上面那两条配对正则就匹配不到了，
+  // 结果「**」被原样念出来（用户实测反馈）。
+  //
+  // 修法：分句后残留的孤立标记直接删掉。放在配对替换之后 ——
+  // 配对成功的已经在上面处理过，走到这里的一定是落单的。
+  s = s.replace(/\*{1,3}/g, '')        // 落单的 * / ** / ***
+  s = s.replace(/_{1,3}/g, '')         // 落单的 _ / __ / ___（斜体另一种写法）
+  s = s.replace(/~~/g, '')             // 删除线标记
   // markdown 链接：只念标题，不念 URL
   s = s.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
   // 裸 URL / 文件路径：整段替换成简短说法，逐字符念 https://... 极其难听
@@ -208,22 +225,68 @@ function enqueueSentence(raw) {
   pump()
 }
 
-// ── 播放泵（串行）───────────────────────────────────────
+// ── 播放泵（流水线：播当前句的同时预合成下一句）─────────────
+//
+// 【为什么要流水线】2026-10-03 用户反馈「读得太慢了」。
+// 实测：合成一句要 1.2~1.9 秒（Edge TTS 网络请求），播放一句 2~3 秒。
+// 原来的实现是严格串行 —— 合成1 → 播放1 → 合成2 → 播放2 ……
+// 于是 N 句回复的总耗时 = N×(合成 + 播放)，模型早说完了声音还在追。
+//
+// 改成流水线后：播放第 1 句的同时，后台已经在合成第 2 句；
+// 播放第 2 句时合成第 3 句……首句延迟不变（仍要等一次合成），
+// 但后续每句省掉一次合成时间。
+//
+//   3 句：12s → 9s   10 句：40s → 27s（句子越多省得越多）
+//
+// 【为什么不用「全部预合成」】那会让首句延迟变长（要等队列里所有句子
+// 都合成完才开始播），且并发请求太多可能触发限流。
+// 只提前一句是「首句最快 + 明显省时」的平衡点。
 async function pump() {
   if (playing) return
   playing = true
   const myEpoch = epoch
+  // 正在预合成的下一句（Promise），避免重复发起
+  let prefetch = null
+
   try {
     while (queue.length) {
       // epoch 变了说明被打断/换轮，剩下的不念了
       if (myEpoch !== epoch) break
       const item = queue.shift()
-      if (!item || item.epoch !== epoch) continue
+      if (!item || item.epoch !== epoch) { prefetch = null; continue }
+
       try {
-        const r = await synthesize(item.text, { voice, rate })
+        // 取「已预合成的这句」或现合成（首句走这里）
+        const synthPromise = (prefetch && prefetch.text === item.text)
+          ? prefetch.promise
+          : (async () => {
+            const r = await synthesize(item.text, { voice, rate })
+            // 合成完立刻量时长 —— 此刻播放器空闲，ffprobe 只要 ~330ms；
+            // 等播放开始后再量会因 Termux API 抢资源变成 ~4.7s（见 playAndWait 注释）
+            const ms = r?.ok && r.file ? await probeDuration(r.file) : 0
+            return { ...r, durationMs: ms }
+          })()
+        prefetch = null
+
+        // 合成当前句的同时，把下一句也发出去合成（流水线核心）
+        const next = queue[0]
+        if (next && next.epoch === epoch) {
+          prefetch = {
+            text: next.text,
+            promise: (async () => {
+              const r = await synthesize(next.text, { voice, rate })
+              const ms = r?.ok && r.file ? await probeDuration(r.file) : 0
+              return { ...r, durationMs: ms }
+            })(),
+          }
+          // 预合成失败不能让整个流程崩 —— 挂个 catch，真正用的时候再看结果
+          prefetch.promise.catch(() => {})
+        }
+
+        const r = await synthPromise
         if (myEpoch !== epoch) break        // 合成期间被打断
         if (!r?.ok || !r.file) continue
-        await playAndWait(r.file, myEpoch)
+        await playAndWait(r.file, myEpoch, r.durationMs)
       } catch { /* 单句失败不影响后续 */ }
     }
   } finally {
@@ -232,33 +295,52 @@ async function pump() {
 }
 
 /**
- * 播放并等它放完（靠 ffprobe 拿时长 sleep；speak 本身不等），播完删文件。
+ * 播放并等它放完，播完删文件。
  *
- * 【为什么这里能播完就删，而 edge-tts 的 speak 不能】
- * speak 是 fire-and-forget，它不知道什么时候播完，只能退化成「删 60 秒以上的旧文件」。
- * 这里为了串行播放本来就必须等到播完（否则下一句会顶掉当前句），
- * 既然等到了，就能安全地立刻删 —— 一句一个文件，不留垃圾。
+ * 【2026-10-03 修：卡顿根因】用户反馈「读都读不顺，中间间隔老大了」。
+ * 实测时间线暴露问题：
+ *
+ *   3447ms  合成完成
+ *   3450ms  开始播放
+ *   8125ms  ffprobe 返回 ← 等了 4.7 秒！
+ *   10622ms 播放结束
+ *
+ * 两个原因叠加：
+ *   1. `termux-media-player play` 的 execFile 回调**要等播放器响应**
+ *      （实测 715ms，播放期间更久）
+ *   2. 拿到回调后才跑 ffprobe 拿时长 —— 而**播放期间跑 ffprobe 要 4.7 秒**
+ *      （Termux API 调用会互相排队抢资源；单独跑只要 329ms）
+ *
+ * 结果每句之间白白多等 ~5 秒，听起来就是「一顿一顿的」。
+ *
+ * 修法：**合成完立刻拿时长**（那时播放器空闲，ffprobe 快），
+ * 播放时直接用拿到的值，不再等 play 回调、不再在播放中跑 ffprobe。
  */
-function playAndWait(file, myEpoch) {
+function probeDuration(file) {
+  return new Promise((resolve) => {
+    execFile('ffprobe', [
+      '-v', 'error', '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1', file,
+    ], (err, stdout) => {
+      const dur = Number(String(stdout || '').trim())
+      resolve(Number.isFinite(dur) && dur > 0 ? dur * 1000 : 0)
+    })
+  })
+}
+
+function playAndWait(file, myEpoch, durationMs) {
   return new Promise((resolve) => {
     const done = () => {
       // 播完即删。删失败不影响流程（下次启动的 sweep 会兜底）。
       try { unlinkSync(file) } catch {}
       resolve()
     }
-    execFile('termux-media-player', ['play', file], () => {
-      if (myEpoch !== epoch) return done()   // 被打断也要删，别留孤儿文件
-      // 拿真实时长；拿不到就按字数估（中文约 4.5 字/秒）
-      execFile('ffprobe', [
-        '-v', 'error', '-show_entries', 'format=duration',
-        '-of', 'default=noprint_wrappers=1:nokey=1', file,
-      ], (err, stdout) => {
-        const dur = Number(String(stdout || '').trim())
-        const ms = Number.isFinite(dur) && dur > 0 ? dur * 1000 + 120 : 2500
-        const t = setTimeout(done, ms)
-        if (t.unref) t.unref()
-      })
-    })
+    // 不传回调 —— 不等播放器响应（那会白白多等几百毫秒到几秒）
+    try { execFile('termux-media-player', ['play', file], () => {}) } catch {}
+    // 用预先量好的时长直接等；量不到就按字数估（中文约 4.5 字/秒）
+    const ms = durationMs > 0 ? durationMs + 120 : 2500
+    const t = setTimeout(done, ms)
+    if (t.unref) t.unref()
   })
 }
 
