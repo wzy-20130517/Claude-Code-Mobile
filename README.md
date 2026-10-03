@@ -79,6 +79,9 @@ Claude Code Mobile（简称 CCM）是一个**运行在 Android 手机上的命�
 
 > 诚实说明：Web 端功能覆盖不如 CLI 完整（部分命令只在终端可用），
 > 但界面完成度和交互细节是认真做过的。
+>
+> ⚠️ Web 前端派生自 [claude-desktop-app](https://github.com/pretend1111/claude-desktop-app)（Non-Commercial 许可），
+> 不可用于商业用途 —— 详见 [`web/README.md`](./web/README.md)。
 
 ### 🔌 扩展性
 
@@ -387,7 +390,17 @@ node --check index.mjs     # 语法检查
 
 ## 许可
 
-MIT
+本项目采用**混合许可**：
+
+| 部分 | 许可 | 说明 |
+|---|---|---|
+| **CLI**（`index.mjs` / `core/` / `tools/` 等） | **MIT** | 自由使用，含商业用途 |
+| **Web 前端**（`web/` 目录） | **Non-Commercial** | 派生自 [claude-desktop-app](https://github.com/pretend1111/claude-desktop-app)，**禁止商业用途** |
+
+Web 端详情见 [`web/README.md`](./web/README.md) 与
+[`web/LICENSE-claude-desktop-app`](./web/LICENSE-claude-desktop-app)。
+
+⚠️ 如果你要把本项目用于商业目的，请**移除 `web/` 目录**，仅使用 MIT 许可的 CLI 部分。
 
 ---
 
@@ -396,6 +409,7 @@ MIT
 本项目的设计与实现参考了以下开源项目（按首字母排序）：
 
 - [agent-mobile-use](https://github.com/AcidGr/agent-mobile-use) —— 手机操作架构（虚拟副屏 + 元素树快照）
+- [claude-desktop-app](https://github.com/pretend1111/claude-desktop-app)（作者 pretend1111）—— **Web 端界面基础**（对话流、Artifacts 面板、文档系统、侧边栏等）
 - [Anthropic Claude Code](https://claude.com/claude-code) —— 交互设计、工具协议、Agent 架构
 - [Codex](https://github.com/openai/codex) —— CLI 交互细节、prompt cache 实践
 - [grok-build](https://github.com/xai-org/grok-build) —— hashline 行锚点编辑（HashlineEdit 工具的设计来源）
