@@ -102,7 +102,10 @@ Claude Code Mobile（简称 CCM）是一个**运行在 Android 手机上的命�
 - **Android 手机**（已在 REDMI Note 15 Pro / Android 15 上验证）
 - **Termux**（从 [F-Droid](https://f-droid.org/packages/com.termux/) 安装，不要用 Play 商店版）
 - **Node.js 18+**（`pkg install nodejs`）
-- 一个 **OpenAI 兼容的 API 端点**（官方 OpenAI / 中转站 / 本地反代均可）
+- 一个 **API 端点**，支持以下三种协议之一（在向导里选）：
+  - **OpenAI 兼容**（`/chat/completions`）—— 最通用，官方 OpenAI / 绝大多数中转站 / 本地反代
+  - **Anthropic**（`/v1/messages`）—— Claude 原生，thinking / cache 语义最准
+  - **Responses**（`/responses`）—— OpenAI 新协议，支持推理项回传与服务端会话
 
 ### 安装
 
@@ -351,8 +354,8 @@ CCM (Termux)
 
 **Q: 支持哪些模型？**
 
-任何 OpenAI / Anthropic 兼容的端点。官方 API、中转站、本地反代都行。
-通过 `/config` 可配多个 Provider 随时切换。
+任何 **OpenAI / Anthropic / Responses 兼容**的端点。官方 API、中转站、本地反代都行。
+通过 `/config` 可配多个 Provider 随时切换，每个 Provider 可独立选协议。
 
 **Q: 数据存在哪？会不会上传？**
 
