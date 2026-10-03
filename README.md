@@ -42,7 +42,7 @@ Claude Code Mobile（简称 CCM）是一个**运行在 Android 手机上的命�
 ### 🤖 Agent 能力
 
 - **完整工具集**：Read / Write / Edit / MultiEdit / ApplyPatch / Glob / Grep / Bash / WebSearch /
-  WebFetch / TodoWrite / Task 等 40+ 工具
+  WebFetch / TodoWrite / Task 等 **60+ 工具**
 - **子 Agent 系统**：可派发独立 Agent 并行处理任务，支持递归派生（并发上限 24）
 - **多 Agent 协作**：Team 工具组（建组/派活/通信/收工），Task 持久化待办跨重启存活
 - **AgentWorkflow**：Explore → Plan → Implement → Review 四阶段工作流
@@ -215,7 +215,8 @@ pkg install termux-api
 | `/voice` | 正文语音朗读开关与音色 |
 | `/say <文本>` | 让 AI 主动语音播报 |
 
-按 `/help` 看全部命令，`/help <主题>` 看详细说明。
+**共 91 个内置命令**（上表只列了常用的），另有 9 个内置技能包。
+按 `/help` 看全部，`/help <主题>` 看详细说明，`/palette` 开模糊搜索面板。
 
 ### 快捷键
 
@@ -235,11 +236,11 @@ pkg install termux-api
 
 ```
 claude-code-mobile/
-├── index.mjs              # CLI 主入口（约 1 万行）
+├── index.mjs              # CLI 主入口（约 6800 行）
 ├── start.sh               # 启动脚本（含重启循环、全局命令安装）
 ├── start-web.sh           # Web 端启动
 │
-├── core/                  # 核心模块（137 个文件，约 4.8 万行）
+├── core/                  # 核心模块（137 个文件，约 4.1 万行）
 │   ├── agent.mjs          # Agent 主循环（工具调用、多轮、并发执行）
 │   ├── api.mjs            # API 客户端（OpenAI/Anthropic/Responses 三协议）
 │   ├── prompts.mjs        # 系统提示词（工具说明、行为准则）
