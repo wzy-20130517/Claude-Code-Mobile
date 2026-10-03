@@ -433,7 +433,7 @@ function saveConfig(config) {
     keyRotateEvery: config.keyRotateEvery,
     // 自动保活开关（/keepalive auto on）。必须登记，否则每次 saveConfig 就把它丢了，
     // 用户开了但重启后不生效（2026-09-14 实测：开了几天都没自动保活，就是这个原因）。
-    keepaliveAuto: config.keepaliveAuto,
+    keepaliveAuto: config.keepaliveAuto !== false,   // 默认开（见下方 autoKeepalive 注释）
     // 独立模块维护的生图配置：从磁盘合并，避免 /model /config 保存时静默删除
     imageGen: diskImageGen,
   }, null, 2), 'utf-8')
@@ -2506,13 +2506,14 @@ async function main() {
   // 攒成行、等 fsSession.start() 之后再写（enter() 会清屏，先写会被擦掉）。
   // 只在重启路径回放：手动启动是新对话，本来就没历史可放。
   //
-  // 【/replay off 可关】2026-10-03 用户要求「有的人可能不想看上面这段历史，
-  // 用 slash 命令控制以后进入会话显示不显示历史消息」。
-  // 三处回放点（此处 + cmd-queries 的两处 /resume）都要受 config.replayHistory 控制，
-  // 只改一处会出现「关了这里还显示」的不一致。默认 true（保持原行为）。
+  // 【/replay 控制】2026-10-03 用户要求「有的人可能不想看上面这段历史」。
+  // 默认值：**关**（2026-10-03 用户拍板「replayHistory 默认关吧」）——
+  // 用户不想每次进会话都被历史刷屏，想要看时用 /replay on 开。
+  // 三处回放点（此处 + replayHistory 注入 + cmd-queries 两处 /resume）都要受控，
+  // 只改一处会出现「关了这里还显示」的不一致。
   const resumedReplayLines = (() => {
     if (!resumed) return []
-    if (config.replayHistory === false) return []
+    if (config.replayHistory !== true) return []
     try {
       const msgs = Array.isArray(resumed.messages) ? resumed.messages : []
       if (!msgs.length) return []
@@ -2532,7 +2533,12 @@ async function main() {
   // 每次程序启动（含 Ctrl+X 重启）都会在这里自动拉起。脚本 start 本身幂等，
   // 所以若 Web/phone use 已经在播，不会重复起第二个循环。
   const mainWake = acquireMainWakeLock()
-  const autoKeepalive = config.keepaliveAuto === true
+  // 自动保活默认**开**（2026-10-03 用户拍板：「耗不了几个电，但非常有用」）。
+  // 判断用 `!== false` 而不是 `=== true`：
+  //   · 老用户 config 里没这个字段 → undefined !== false → 开（迁移到新默认）
+  //   · 只有显式 /keepalive auto off 才会关
+  // 背景：静音音频防系统冻结 Termux，息屏挂机必需；用户确认耗电可接受。
+  const autoKeepalive = config.keepaliveAuto !== false
   if (autoKeepalive) {
     const audioScript = join(process.cwd(), 'core', 'audio-keepalive.sh')
     try {
@@ -2729,9 +2735,9 @@ async function main() {
     tryResume: () => tryResume(),
     // 历史回放：把恢复的会话画到屏幕上（对齐官方 REPL.tsx:1182）。
     // 只返回字符串，由调用方统一 emit —— 命令模块不直接写 stdout。
-    // /resume 的历史回放（用户可用 /replay off 关闭）。
-    // 关时返回空串，调用方拼出来就是「已恢复会话（N 条消息）」一行，没有历史正文。
-    replayHistory: (messages) => (config.replayHistory === false ? '' : formatHistoryForReplay(messages, { C }).join('\n')),
+    // /resume 的历史回放（用户可用 /replay on 开启；默认关）。
+    // 关时返回空串，调用方拼出来就只有「已恢复会话（N 条消息）」一行，没有历史正文。
+    replayHistory: (messages) => (config.replayHistory !== true ? '' : formatHistoryForReplay(messages, { C }).join('\n')),
     // 新会话起点线（/new 用）：和启动路径的 New Session Start 保持一致
     sessionDividerLines: () => sessionDivider(C, 'New Session Start', { leadingBlank: false }),
 
