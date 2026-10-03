@@ -73,6 +73,11 @@ const DOMAIN_TRUST = [
   // GitHub 是代码与文档的一手载体 —— 都算权威站，不是普通 UGC
   [/(^|\.)(github|stackoverflow|npmjs|pypi|readthedocs)\./i, 2],
   [/developer\.mozilla\.org/i, 2],
+  // 学术源（2026-10-03 加）：预印本/文献库是研究一手材料，但有「未同行评审」
+  // 的差别 —— arXiv 是预印本（未评审），OpenAlex/Crossref/PubMed 收录的是
+  // 正式发表文献。统一给 2（权威站），具体可信度看是不是已发表。
+  [/(^|\.)(arxiv|openalex|crossref|doi|dblp|pubmed|ncbi\.nlm\.nih)\./i, 2],
+  [/pubmed\.ncbi\.nlm\.nih\.gov/i, 2],
   // HackerNews：技术圈一手讨论，质量高于一般论坛但仍是个人发言 → 1.8
   [/(^|\.)(news\.ycombinator|ycombinator)\.com/i, 1.8],
   // 1.5 = UGC 内容平台：单条别当结论，多条独立印证时可信度不低
@@ -347,6 +352,263 @@ async function searchMojeek(q) {
   } catch { return [] }
 }
 
+// ── 中文索引补充（2026-10-03 加）──────────────────────────
+//
+// 【来源】用户要求「研究 github.com/sweetcornna/free-search-mcp，
+// 把它做成我们项目的原生工具」。那是 Python 项目（78 个引擎），
+// 我们只搬**能用的**解析规则，不搬代码（语言不同 + 许可证要看清）。
+//
+// 挑这两个的理由：中文搜索长期只有 Bing/百度两个入口，
+// 它们各有盲区（Bing 中文覆盖一般、百度结果商业化重）。
+// 搜狗和 360 是第二、第三大中文索引，同样关键词常给出不同结果 ——
+// 多索引交叉能显著提升命中率。两个都是**无 key 的 HTML 抓取**，
+// 与现有 Bing/百度/Mojeek 同一套路。
+//
+// 【原实现的关键提示，都踩过坑】
+//   搜狗：返回的是 /link?url=<加密串> 重定向，不是目标 URL。
+//         那个串客户端解不开、只能跟随跳转。所以：
+//           · 直接发重定向链接（Lookup 抓取时 fetch 会自动 follow，能正常读）
+//           · 但所有结果 host 都是 www.sogou.com，按 host 分类会全部误判
+//         过滤规则：只要 /link? 开头或 http 开头的（其余是页面内小工具链接）
+//   360：li.res-list → h3 a，href 常带点击跟踪，优先取 data-mdurl（规范目标）。
+//        页面按 10 条分页，要多了没用。
+
+/** 搜狗（HTML 抓取；结果多为 /link? 重定向链接） */
+async function searchSogou(q) {
+  try {
+    const html = await fetchText(`https://www.sogou.com/web?query=${encodeURIComponent(q)}`)
+    const out = []
+    // 按 h3.vr-title 切块（比整体正则稳：能顺带取到块内摘要）
+    const blocks = html.split(/<h3[^>]*class="[^"]*vr-title[^"]*"/i).slice(1)
+    for (const blk of blocks) {
+      if (out.length >= 5) break
+      const m = blk.match(/<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i)
+      if (!m) continue
+      const href = m[1].trim()
+      const title = stripTags(m[2])
+      // 页面内小工具链接（javascript:void(0) 之类）不是结果，跳过
+      if (!title || href.startsWith('javascript:')) continue
+      // 真结果只有两种形态：站内重定向 /link?url=... 或直接 http(s)
+      if (!(href.startsWith('/link?') || href.startsWith('http'))) continue
+      const url = href.startsWith('/link?') ? `https://www.sogou.com${href}` : href
+      // 摘要：块内找常见容器（搜狗嵌套层级不稳定，试几种）
+      const sm = blk.match(/<div[^>]*class="[^"]*(?:text-layout|fz-mid|space-txt)[^"]*"[^>]*>([\s\S]*?)<\/div>/i)
+        || blk.match(/<p[^>]*class="[^"]*str-info[^"]*"[^>]*>([\s\S]*?)<\/p>/i)
+      let host = ''
+      try { host = new URL(url).hostname } catch {}
+      out.push({
+        title: title.slice(0, 80),
+        url,
+        snippet: sm ? stripTags(sm[1]).slice(0, 180) : '',
+        source: host || 'sogou.com',
+      })
+    }
+    return out
+  } catch { return [] }
+}
+
+/** 360 搜索（HTML 抓取；链接是直接目标 URL，无需解重定向） */
+async function searchSo360(q) {
+  try {
+    const html = await fetchText(`https://www.so.com/s?q=${encodeURIComponent(q)}&rn=10`)
+    const out = []
+    const blocks = html.split(/<li[^>]*class="[^"]*res-list[^"]*"/i).slice(1)
+    for (const blk of blocks) {
+      if (out.length >= 5) break
+      const h3 = blk.match(/<h3[^>]*>([\s\S]*?)<\/h3>/i)
+      if (!h3) continue
+      const anchorTag = h3[1].match(/<a[^>]*>/i)
+      if (!anchorTag) continue
+      // 优先 data-mdurl（360 的点击跟踪会把 href 换成跳转链，mdurl 才是规范目标）
+      const href = (anchorTag[0].match(/data-mdurl="([^"]+)"/i)
+        || anchorTag[0].match(/href="([^"]+)"/i) || [])[1] || ''
+      const title = stripTags(h3[1])
+      if (!title || !href.startsWith('http')) continue
+      const dm = blk.match(/<p[^>]*class="[^"]*res-desc[^"]*"[^>]*>([\s\S]*?)<\/p>/i)
+        || blk.match(/<div[^>]*class="[^"]*res-comm-con[^"]*"[^>]*>([\s\S]*?)<\/div>/i)
+      let host = ''
+      try { host = new URL(href).hostname } catch {}
+      out.push({
+        title: title.slice(0, 80),
+        url: href,
+        snippet: dm ? stripTags(dm[1]).slice(0, 180) : '',
+        source: host,
+      })
+    }
+    return out
+  } catch { return [] }
+}
+
+// ── 垂直领域 API 源（2026-10-03 加，共 8 个）────────────────
+//
+// 【来源】同上，从 github.com/sweetcornna/free-search-mcp 的 78 个引擎里挑。
+// 【为什么挑这些】原项目有大量「被墙」或「要 key」的源，实测后**只留能连通的**：
+//   ✓ 可用：arxiv / openalex / crossref / pubmed / npm / pypi / mdn
+//   ✗ 被墙：wikipedia(中英) / huggingface / coingecko / google news /
+//           duckduckgo / startpage / searx 公共实例 / wikidata
+//   ✗ 反爬：dblp（2026-10-03 实测：Anubis Proof-of-Work 挑战，无头客户端过不去）
+//   ✗ 限流：semanticscholar（429，要 key）
+// 被墙/反爬的源不加入 —— 加了只会让每次搜索多等一个超时。
+//
+// 【共同优点】全部走官方 JSON API，比 HTML 抓取稳定得多：
+// 页面结构一变解析就废（搜狗当年就是这么被弃的），API 字段是契约。
+//
+// 【定位】这 8 个是**垂直源**，不是通用网页搜索 —— 只在关键词正好落在
+// 它们领域时才有结果（搜「周杰伦」arxiv 返回空是正常的）。
+// 所以它们不抢通用源的位置，是「顺带捞一把」：查技术/学术话题时
+// 能直接给出权威条目（论文、包、文档），比从博客里翻二手转述强。
+
+/** arXiv（预印本论文，物理/数学/CS 为主） */
+async function searchArxiv(q) {
+  try {
+    const r = await fetch(`http://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(q)}&max_results=5`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+    if (!r.ok) return []
+    const xml = await r.text()
+    const out = []
+    for (const m of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
+      const e = m[1]
+      const title = stripTags((e.match(/<title>([\s\S]*?)<\/title>/) || [])[1] || '')
+      const link = (e.match(/<id>([\s\S]*?)<\/id>/) || [])[1] || ''
+      const summary = stripTags((e.match(/<summary>([\s\S]*?)<\/summary>/) || [])[1] || '')
+      const pub = ((e.match(/<published>([\s\S]*?)<\/published>/) || [])[1] || '').slice(0, 10)
+      const authors = [...e.matchAll(/<name>([\s\S]*?)<\/name>/g)].slice(0, 3).map((a) => stripTags(a[1])).join(', ')
+      if (!title || !link) continue
+      out.push({
+        title: title.slice(0, 80),
+        url: link.trim(),
+        snippet: `${summary.slice(0, 110)}（${authors}${authors ? ' · ' : ''}${pub}）`,
+        source: 'arxiv.org',
+      })
+      if (out.length >= 5) break
+    }
+    return out
+  } catch { return [] }
+}
+
+/** OpenAlex（学术文献聚合，覆盖最广的开放学术库） */
+async function searchOpenAlex(q) {
+  try {
+    const r = await fetch(`https://api.openalex.org/works?search=${encodeURIComponent(q)}&per_page=5&mailto=ccm@example.com`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+    if (!r.ok) return []
+    const j = await r.json()
+    return (j?.results || []).slice(0, 5).map((w) => {
+      const authors = (w.authorships || []).slice(0, 3).map((a) => a.author?.display_name).filter(Boolean).join(', ')
+      return {
+        title: String(w.title || w.display_name || '').slice(0, 80),
+        url: w.doi || w.id || '',
+        snippet: `${(w.publication_year || '?')} · 被引 ${w.cited_by_count || 0}${authors ? ' · ' + authors : ''}`,
+        source: 'openalex.org',
+      }
+    }).filter((x) => x.url && x.title)
+  } catch { return [] }
+}
+
+/** Crossref（DOI 注册机构，查文献元数据最权威） */
+async function searchCrossref(q) {
+  try {
+    const r = await fetch(`https://api.crossref.org/works?query=${encodeURIComponent(q)}&rows=5&mailto=ccm@example.com`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+    if (!r.ok) return []
+    const j = await r.json()
+    return (j?.message?.items || []).slice(0, 5).map((it) => {
+      const title = (it.title || [])[0] || ''
+      const authors = (it.author || []).slice(0, 3).map((a) => [a.given, a.family].filter(Boolean).join(' ')).join(', ')
+      return {
+        title: String(title).slice(0, 80),
+        url: it.DOI ? `https://doi.org/${it.DOI}` : (it.URL || ''),
+        snippet: `${(it.published?.['date-parts']?.[0]?.[0]) || '?'} · ${(it['container-title'] || [])[0] || ''}${authors ? ' · ' + authors : ''}`.slice(0, 140),
+        source: 'doi.org',
+      }
+    }).filter((x) => x.url && x.title)
+  } catch { return [] }
+}
+
+/** PubMed（生物医学文献） */
+async function searchPubmed(q) {
+  try {
+    // 两步：先 esearch 拿 ID 列表，再 esummary 拿标题
+    const s = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(q)}&retmode=json&retmax=5`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+    if (!s.ok) return []
+    const sj = await s.json()
+    const ids = sj?.esearchresult?.idlist || []
+    if (!ids.length) return []
+    const d = await fetch(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${ids.join(',')}&retmode=json`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+    if (!d.ok) return []
+    const dj = await d.json()
+    return ids.map((id) => {
+      const it = dj?.result?.[id]
+      if (!it) return null
+      const authors = (it.authors || []).slice(0, 3).map((a) => a.name).join(', ')
+      return {
+        title: String(it.title || '').replace(/\.$/, '').slice(0, 80),
+        url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
+        snippet: `${it.pubdate || '?'} · ${it.fulljournalname || it.source || ''}${authors ? ' · ' + authors : ''}`.slice(0, 140),
+        source: 'pubmed.ncbi.nlm.nih.gov',
+      }
+    }).filter((x) => x && x.title)
+  } catch { return [] }
+}
+
+/** npm（JS 包，查库/框架） */
+async function searchNpm(q) {
+  try {
+    const r = await fetch(`https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(q)}&size=5`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+    if (!r.ok) return []
+    const j = await r.json()
+    return (j?.objects || []).slice(0, 5).map((o) => {
+      const p = o.package || {}
+      return {
+        title: `${p.name}${p.description ? ' — ' + stripTags(p.description).slice(0, 50) : ''}`,
+        url: p.links?.npm || `https://www.npmjs.com/package/${p.name}`,
+        snippet: `v${p.version || '?'} · ${String(p.date || '').slice(0, 10)}`,
+        source: 'npmjs.com',
+      }
+    }).filter((x) => x.url && x.title)
+  } catch { return [] }
+}
+
+/** PyPI（Python 包） */
+async function searchPypi(q) {
+  try {
+    // PyPI 没有搜索 API，用仓库页的 JSON 接口按名称精确查
+    // （模糊搜要靠 XML-RPC，已废弃；这里退化为「关键词当包名试」）
+    const name = String(q).trim().split(/\s+/)[0]
+    if (!/^[a-zA-Z0-9._-]+$/.test(name)) return []
+    const r = await fetch(`https://pypi.org/pypi/${encodeURIComponent(name)}/json`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+    if (!r.ok) return []
+    const j = await r.json()
+    const info = j?.info || {}
+    return [{
+      title: `${info.name}${info.summary ? ' — ' + stripTags(info.summary).slice(0, 50) : ''}`,
+      url: info.package_url || `https://pypi.org/project/${info.name}/`,
+      snippet: `v${info.version || '?'} · ${info.author || ''} · Python ${(info.requires_python || '').replace(/[><=,]/g, '')}`,
+      source: 'pypi.org',
+    }].filter((x) => x.url && x.title)
+  } catch { return [] }
+}
+
+/** MDN（Web 前端文档，查 API/语法） */
+async function searchMdn(q) {
+  try {
+    const r = await fetch(`https://developer.mozilla.org/api/v1/search?q=${encodeURIComponent(q)}&locale=zh-CN&size=5`,
+      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(15000) })
+    if (!r.ok) return []
+    const j = await r.json()
+    return (j?.documents || []).slice(0, 5).map((d) => ({
+      title: String(d.title || '').slice(0, 80),
+      url: d.mdn_url ? `https://developer.mozilla.org${d.mdn_url}` : '',
+      snippet: stripTags(d.summary || '').slice(0, 130),
+      source: 'developer.mozilla.org',
+    })).filter((x) => x.url && x.title)
+  } catch { return [] }
+}
+
 /** 去重（按 URL），合并各源结果并按权威度排序 */
 function merge(results) {
   const seen = new Set()
@@ -356,7 +618,75 @@ function merge(results) {
     seen.add(r.url)
     out.push({ ...r, trust: trustOf(r.url) })
   }
-  return out.sort((a, b) => b.trust - a.trust)
+  // 按权威度排序
+  out.sort((a, b) => b.trust - a.trust)
+
+  // ── 来源多样性（2026-10-03 加）────────────────────────
+  //
+  // 【为什么需要】纯按权威度排会「一个源霸屏」：实测搜 transformer 时，
+  // PubMed 命中 .gov 规则拿 4 分，前 5 条全是生物医学论文
+  // （蛋白质展开、药物靶点…）—— 用户要的是技术资料，这是噪音。
+  //
+  // 【做法】同一 host 最多连排 MAX_PER_HOST 条，超出的往后挪。
+  // 不丢弃（信息还在），只是不让单一源占据整个前排。
+  //
+  // 【为什么是 3】前排默认展示 25 条，3 条 = 12%，够看出「这个源有货」，
+  // 又不至于压掉别的源。设成 1 会让「GitHub 搜到 5 个相关项目」这类
+  // 高价值场景被拆散。
+  const MAX_PER_HOST = 3
+  const hostCount = new Map()
+  const primary = []
+  const overflow = []
+  for (const it of out) {
+    let host = ''
+    try { host = new URL(it.url).hostname.replace(/^www\./, '') } catch {}
+    const n = hostCount.get(host) || 0
+    if (n < MAX_PER_HOST) {
+      hostCount.set(host, n + 1)
+      primary.push(it)
+    } else {
+      overflow.push(it)
+    }
+  }
+  // 超出的按原顺序追加在后面（信息不丢，只是排后）
+  return [...primary, ...overflow]
+}
+
+// ── 垂直源的相关性过滤（2026-10-03 加）────────────────────
+//
+// 【踩的坑】实测搜「周杰伦」时，MDN/StackOverflow/GitHub 的**无关结果**
+// 排在百度百科前面 —— 因为：
+//   1. 这些源是英文技术站，用中文词查不到东西
+//   2. 但它们会**兜底返回热门内容**（GitHub 搜「周杰伦」返回 24256 星的
+//      书单仓库、x86 汇编示例…，跟查询毫无关系）
+//   3. 而它们的域名权威度高（github.com=2、developer.mozilla.org=2），
+//      按权威度排就窜到前面了
+//
+// 【做法】垂直源的条目，标题/摘要里必须出现查询词（或其英文片段）才保留。
+// 通用搜索引擎（Bing/百度/搜狗/360）不做这个过滤 —— 它们本来就会做
+// 语义匹配，返回的是相关结果。
+//
+// 【关键词怎么切】中文查询整体匹配；英文查询按词匹配（任一实词命中即可，
+// 因为标题里通常不会包含完整短语）。长度 <2 的词忽略（a/is/of 这类）。
+const VERTICAL_SOURCES = new Set([
+  'arxiv.org', 'openalex.org', 'doi.org', 'pubmed.ncbi.nlm.nih.gov',
+  'npmjs.com', 'pypi.org', 'developer.mozilla.org',
+  // 通用但会兜底返回无关内容的源（实测 GitHub 搜中文词返回热门仓库）
+  'github.com', 'stackoverflow.com',
+])
+
+function isRelevant(item, query) {
+  const hay = `${item.title || ''} ${item.snippet || ''}`.toLowerCase()
+  const q = String(query || '').toLowerCase().trim()
+  if (!q) return true
+
+  // 中文/无空格查询：整体子串匹配（「周杰伦」必须出现在文本里）
+  if (!/\s/.test(q)) return hay.includes(q)
+
+  // 英文/多词查询：任一实词命中即可
+  const words = q.split(/\s+/).filter((w) => w.length >= 3)
+  if (!words.length) return true
+  return words.some((w) => hay.includes(w))
 }
 
 /** 资料卡落盘，上限 5 张（超了删最旧） */
@@ -378,7 +708,10 @@ export class SearchInfoTool extends Tool {
   constructor() {
     super({
       name: 'SearchInfo',
-      description: '多来源资料搜索：一次查 Bing/百度/B站/CSDN/掘金/V2EX/HackerNews/StackOverflow/GitHub/Mojeek 十个源，返回资料卡（标题+摘要+来源+来源标注，按可信度排序）。'
+      description: '多来源资料搜索：一次查 19 个源，返回资料卡（标题+摘要+来源+来源标注，按可信度排序）。'
+        + '通用源 12 个：Bing/百度/搜狗/360/B站/CSDN/掘金/V2EX/HackerNews/StackOverflow/GitHub/Mojeek；'
+        + '垂直源 7 个：arXiv/OpenAlex/Crossref/PubMed（学术）、npm/PyPI（包）、MDN（前端文档）——'
+        + '垂直源只在关键词落在其领域时才有结果（搜「周杰伦」arXiv 返回空是正常的），不抢通用源的位置。'
         + '返回资料卡 id 和条目列表，再用 Lookup({ card, index }) 打开某条抓全文。'
         + '关键词可以来自任何地方：用户直接问的问题、看图后提炼的特征、任务里需要查证的事实。'
         + '\n来源标注怎么用（域名映射的参考值，不是结论）：'
@@ -426,21 +759,41 @@ export class SearchInfoTool extends Tool {
     if (!queries.length) return '需要 keywords（搜索关键词，字符串或数组）'
     try { mkdirSync(LOOKUP_DIR, { recursive: true }) } catch {}
 
-    /** 跑一个关键词的全部源（十个源并发，失败源自己返回 [] 不拖垮整体） */
+    /** 跑一个关键词的全部源（19 个源并发，失败源自己返回 [] 不拖垮整体）
+     *  通用源 12 个：bing/baidu/sogou/360/bili/mojeek/csdn/juejin/v2ex/hn/so/gh
+     *  垂直源 7 个：arxiv/openalex/crossref/pubmed/npm/pypi/mdn
+     *  —— 垂直源只在关键词落在其领域时才有结果（搜「周杰伦」arxiv 返回空是正常的），
+     *     所以它们不抢位置，是「顺带捞一把」。
+     */
     const runOne = async (q) => {
-      const [bing, baidu, bili, mojeek, csdn, juejin, v2ex, hn, so, gh] = await Promise.all([
+      const [bing, baidu, bili, mojeek, sogou, so360, csdn, juejin, v2ex, hn, so, gh,
+        arxiv, openalex, crossref, pubmed, npm, pypi, mdn] = await Promise.all([
         searchBing(q), searchBaidu(q), searchBili(q), searchMojeek(q),
+        searchSogou(q), searchSo360(q),
         searchCsdn(q), searchJuejin(q), searchV2ex(q),
         searchHackerNews(q), searchStackOverflow(q), searchGithub(q),
+        searchArxiv(q), searchOpenAlex(q), searchCrossref(q),
+        searchPubmed(q), searchNpm(q), searchPypi(q), searchMdn(q),
       ])
-      return [...bing, ...baidu, ...bili, ...mojeek, ...csdn, ...juejin, ...v2ex, ...hn, ...so, ...gh]
+      return [...bing, ...baidu, ...bili, ...mojeek, ...sogou, ...so360,
+        ...csdn, ...juejin, ...v2ex, ...hn, ...so, ...gh,
+        ...arxiv, ...openalex, ...crossref, ...pubmed, ...npm, ...pypi, ...mdn]
     }
 
     // 多关键词之间也并行 —— 串行搜 4 个词要等 4 倍时间
     const perQuery = await Promise.all(queries.map(runOne))
     // 打上来源关键词标签（合并去重后还能看出每条是哪个词搜来的）
     const tagged = perQuery.flatMap((items, qi) => items.map((it) => ({ ...it, _q: queries[qi] })))
-    const items = merge(tagged)
+    // 垂直源相关性过滤（见 isRelevant 注释）：
+    // 剔除「英文技术站被中文词查询时兜底返回的热门内容」这类噪音。
+    // 用 _q（该条来自哪个查询词）判断相关性，而不是整组关键词 ——
+    // 多关键词并行时，A 词搜到的条目不该因为 B 词不匹配被误杀。
+    const filtered = tagged.filter((it) => {
+      const host = String(it.source || '').replace(/^www\./, '')
+      if (!VERTICAL_SOURCES.has(host)) return true
+      return isRelevant(it, it._q)
+    })
+    const items = merge(filtered)
     if (items.length === 0) return `${queries.map((q) => `「${q}」`).join(' ')}各来源都没有结果`
 
     const cardId = saveCard(queries.join(' | '), items)
