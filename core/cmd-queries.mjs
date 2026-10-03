@@ -425,7 +425,8 @@ export function makeSessionCommands(ctx) {
           + (matchKind === 'prefix' ? `\n（按名称前缀「${query}」匹配到 ${targetId}）` : '')
           // 历史回放（对齐官方：恢复的上下文直接渲染上屏）。
           // ctx.replayHistory 由 CLI 注入；Web 端不注入则跳过（它有自己的消息列表）。
-          + (ctx.replayHistory ? '\n' + ctx.replayHistory(data.messages) : '')
+          // 返回值可能是空串（用户 /replay off 时）—— 这时不要多打一个空行。
+          + (() => { const h = ctx.replayHistory ? ctx.replayHistory(data.messages) : ''; return h ? '\n' + h : '' })()
       }
 
       // 不带参数 → 切到「上一个」会话（排除当前）。
@@ -459,7 +460,7 @@ export function makeSessionCommands(ctx) {
       if (n === 0) return `已切回会话 ${targetId}（记录为空，可能被 /clear 过；找回内容用 /clear-restore）`
       return `已恢复${data.incognito ? ' Incognito 隔离' : ''}会话${data.title ? `: ${data.title}` : ''} (${n} 条消息)`
         + `\n（从 ${curId} 切走；切回用 /resume ${curId}）`
-        + (ctx.replayHistory ? '\n' + ctx.replayHistory(data.messages) : '')
+        + (() => { const h = ctx.replayHistory ? ctx.replayHistory(data.messages) : ''; return h ? '\n' + h : '' })()
     },
   }
 }
