@@ -95,8 +95,8 @@ Claude Code Mobile（简称 CCM）是一个**运行在 Android 手机上的命�
 ### 安装
 
 ```bash
-# 1. 装依赖
-pkg install nodejs git
+# 1. 装依赖（nodejs 必需，termux-api 可选但推荐，见下）
+pkg install nodejs git termux-api
 
 # 2. 克隆项目
 cd ~
@@ -114,8 +114,45 @@ bash start.sh
 - **API 地址**（如 `https://api.openai.com/v1`，或你的中转站地址）
 - **API Key**
 - **模型名**（如 `gpt-4o`、`claude-sonnet-4`，取决于你的端点支持什么）
+- **终端字体**（字体已内置在项目里，选完直接装、无需联网）
 
 配置存在 `~/.claude-code-mobile/config.json`，**源码目录不含任何用户数据**。
+
+### 启动方式
+
+**首次启动必须用 `bash start.sh`**（它会做两件事：装依赖、把 `claude` 命令注册到 `$PREFIX/bin`）。
+之后就可以用全局命令了：
+
+```bash
+claude          # 启动 CLI（等同于 bash start.sh）
+claude web      # 启动 Web 端（后台守护 + 自动打开浏览器）
+```
+
+`claude web` 会在 `http://127.0.0.1:3456` 起一个 Web 服务，手机浏览器或局域网内的电脑都能访问。
+
+> 全局命令的安装逻辑在 `start.sh` 里：它把启动器写进 `$PREFIX/bin/claude`，
+> 且**不会覆盖**已有的同名命令（如果你装过官方 Claude Code，两者不冲突）。
+
+### 可选依赖：Termux API
+
+部分功能依赖 **termux-api**（Termux 的 Android 能力桥）：
+
+```bash
+pkg install termux-api
+# 还要装 Termux:API 应用（F-Droid 搜索 "Termux:API"）
+```
+
+装好后可用：
+
+| 功能 | 对应工具 |
+|---|---|
+| 系统通知 | `Notify` |
+| 剪贴板读写 | `ClipboardGet` / `ClipboardSet` |
+| 语音播报 | `say` / `TTS` |
+| 震动、电量、GPS | `Vibrate` / `Battery` / `Location` |
+| 分享到其他 App | `Share` |
+
+**不装也能用**，只是这些工具会报「未安装 termux-api」。
 
 ### 可选：手机操作能力（虚拟副屏）
 
@@ -304,8 +341,13 @@ CCM (Termux)
 
 **Q: 数据存在哪？会不会上传？**
 
-全在 `~/.claude-code-mobile/`，不上传任何地方（除非你主动配了备份或同步）。
-API 请求只发给**你自己配置的**端点。
+全在 `~/.claude-code-mobile/`，**不会上传到任何地方**。
+API 请求只发给你自己配置的端点。
+
+**Q: 我装过官方 Claude Code，`claude` 命令会冲突吗？**
+
+不会。`start.sh` 安装全局命令时会先检查——如果 `$PREFIX/bin/claude` 已存在
+且不是本项目的，就跳过安装，你的官方版不受影响。这时用 `bash start.sh` 启动本项目。
 
 **Q: 为什么用 Node 而不是原生？**
 
