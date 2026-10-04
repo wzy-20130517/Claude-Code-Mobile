@@ -302,7 +302,8 @@ export class Agent {
             this._lastUsedStream = false
             response = await this.api.createMessage({
               system: this.systemPrompt,
-              messages: this.messages,
+              // 与流式路径一致：裁剪历史旧图（只改副本，不动 this.messages）
+              messages: this._pruneOldImages(this.messages),
               tools: this.tools.map(t => t.toSchema()),
               signal,
             })
@@ -990,6 +991,64 @@ export class Agent {
   }
 
   /**
+   * 裁剪历史消息中的旧图片（只作用于发给 API 的副本，不改 this.messages）。
+   *
+   * 【为什么需要】主对话历史里每张图都是 base64 data URL（300KB 图 ≈ 400k 字符）。
+   * 聊得越久带图越多，单次请求体积和 token 都线性膨胀 —— 实测带 3 轮图的请求
+   * 能到 1.5MB+，每轮都重发一遍纯属浪费。
+   *
+   * 【策略】只保留**最近一条**带图消息（当前轮用户刚发的图必须原样发），
+   * 更早的 image_url 块替换成文本：
+   *   （图片已省略）本地路径：/sdcard/xxx.png —— 需要重看时用 ViewImage 读
+   * 路径信息优先从同消息的 web_attachment 块里取（Web 端上传的图带真实路径），
+   * 找不到就退化为纯占位文本（不编造路径）。
+   *
+   * 【为什么不动 this.messages】会话存档 / 撤回 / 重看都依赖原图块；
+   * 抹掉就真丢了。这里返回新数组 + 新消息对象（浅拷贝），原数据零改动。
+   */
+  _pruneOldImages(messages) {
+    if (!Array.isArray(messages) || messages.length === 0) return messages
+    // 找最后一条带图消息的下标
+    let lastImageIdx = -1
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m && Array.isArray(m.content) && m.content.some(b => b && b.type === 'image_url')) {
+        lastImageIdx = i
+        break
+      }
+    }
+    // 没有图，或图就在最后一条（没什么可裁的）→ 原样返回
+    if (lastImageIdx < 0) return messages
+    let changed = false
+    const out = messages.map((m, i) => {
+      if (i >= lastImageIdx) return m          // 最近一条带图消息及其之后：不动
+      if (!m || !Array.isArray(m.content)) return m
+      if (!m.content.some(b => b && b.type === 'image_url')) return m
+      // 收集本消息里能拿到的图片路径（Web 端 web_attachment 带真实路径）
+      const paths = m.content
+        .filter(b => b && b.type === 'web_attachment' && b.file_type === 'image' && b.path)
+        .map(b => String(b.path))
+      let n = 0
+      const newContent = m.content.map(block => {
+        if (block && block.type === 'image_url') {
+          const p = paths[n] || null
+          n++
+          return {
+            type: 'text',
+            text: p
+              ? `（图片已省略）本地路径：${p}，需要重看时用 ViewImage 读该路径`
+              : '（图片已省略）',
+          }
+        }
+        return block
+      })
+      changed = true
+      return { ...m, content: newContent }
+    })
+    return changed ? out : messages
+  }
+
+  /**
    * 给 visionApi 的精简历史：GLM-4V 等识图模型窗口小，不能把整段历史（含多轮
    * 累积的图片 data URL）都发过去。策略：
    * - 保留最后一条带图消息（本轮图片）
@@ -1036,9 +1095,20 @@ export class Agent {
     const apiForThis = (hasImage && this.visionApi) ? this.visionApi : this.api
     // visionApi（如 GLM-4V）窗口小（16K），整段历史含多轮图片 data URL 必然 400 溢出。
     // 只保留本轮带图消息 + 最近若干条文本消息，旧图替换为占位文本。
-    const messagesForApi = (hasImage && this.visionApi)
+    let messagesForApi = (hasImage && this.visionApi)
       ? this._prepareVisionMessages(this.messages)
       : this.messages
+    // 【历史旧图裁剪 · 2026-10-04】
+    // 主对话历史里每张图都是 base64 data URL（一张 300KB 图 ≈ 400k 字符），
+    // 越聊越重：多轮带图后单次请求能到几 MB，token 也哗哗烧。
+    // 策略：**只保留最近一条带图消息**（当前轮的图必须让模型看到），
+    // 更早的图替换为「（图片已省略）+ 本地路径」文本 ——
+    // 路径一直在磁盘上，模型需要重看时用 ViewImage 读即可。
+    // 注意：只改发给 API 的副本（messagesForApi），不动 this.messages 本体，
+    // 否则会话存档里的原图也会被抹掉（下次 resume 就真丢了）。
+    if (!(hasImage && this.visionApi)) {
+      messagesForApi = this._pruneOldImages(messagesForApi)
+    }
     const streamController = new AbortController()
     const streamSignal = streamController.signal
     // 【提前执行工具的独立 signal · 2026-09-04 修 bug】
