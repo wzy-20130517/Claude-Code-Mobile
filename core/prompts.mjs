@@ -373,7 +373,10 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
 - **phone_key**: 系统按键（back/home/recent/enter/delete 等）
 - **phone_wait**: 等界面稳定或等文字出现/消失，参数名是 max_wait_ms
 - **phone_screenshot**: 截取并注入当前手机画面
-- **phone_app**: 启动应用（**在虚拟副屏启动，不占物理屏**；若应用已在主屏运行会自动搬运过去，不重启）、action:'list' 列已装应用
+- **phone_app**: 启动应用（**在虚拟副屏启动，不占物理屏**；若应用已在主屏运行会自动搬运过去，不重启）。
+  action:'list' 列已装应用——**默认只有包名**（如 com.yixiu.magicsquare）；
+  要看中文名（如「柠檬音乐」）用 action:'label' + package 读单个（约 0.5~1.3 秒，读完进缓存）；
+  list 加 labels:true 只显示**已缓存**的中文名，不现场扫描（实测全量扫 71 个要 60~90 秒且手机发烫，已否决）
 - **phone_scroll**: 滚动。给 id 就滚那个元素，否则按 direction（up/down）滑一屏
 - **phone_shell**: **在 Android 系统里跑任意 shell**（uid=2000 shell）。与 Bash 的分工：
   Bash 跑在 Termux 里（读写文件），phone_shell 跑在 Android 里（操作手机）。

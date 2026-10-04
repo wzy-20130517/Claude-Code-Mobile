@@ -26,8 +26,9 @@ import { runShell, captureScreen, loadDeviceConfig, saveDeviceConfig, vdAlive, v
 import { speak } from './edge-tts.mjs'
 import { loadImageBlock } from './image.mjs'
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
+import { dataPath } from './paths.mjs'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
@@ -1200,17 +1201,88 @@ export class SayTool extends Tool {
   }
 }
 
+// ── 应用中文名（label）读取 ──────────────────────────────────
+//
+// 【为什么需要】2026-10-04 用户点出：`phone_app list` 只给包名，
+// 而包名是拼音/英文（如「柠檬音乐」= com.yixiu.magicsquare），
+// 用户说中文名时搜不到、找不到对应包。
+//
+// 【为什么不用 dumpsys】实测确认 `dumpsys package` 输出里**没有 label 字段**
+// （网上流传的 `dumpsys package 包名 | grep -i label` 对本机无效），
+// `dumpsys activity` 的 taskDescription 也全是 null。
+// label 是**资源**（存在 APK 的 resources.arsc 里），唯一可靠来源是 aapt 读 APK。
+//
+// 【速度】单个 App 约 0.5~1.3 秒（复制整个 APK 到 /data/local/tmp + aapt 解析，
+// 耗时取决于 APK 大小——QQ 的 APK 有 400MB）。实测 71 个第三方 App 全量扫描
+// 要 60~90 秒、期间手机明显发热，所以**不做批量扫描**，只按需读单个。
+// 结果缓存在 ~/.claude-code-mobile/app-labels.json，list 时只展示已缓存的。
+
+const APP_LABELS_CACHE = dataPath('app-labels.json')
+
+/** 读 label 缓存（失败返回空对象，不阻塞） */
+function loadLabelCache() {
+  try {
+    if (!existsSync(APP_LABELS_CACHE)) return {}
+    const d = JSON.parse(readFileSync(APP_LABELS_CACHE, 'utf-8'))
+    return (d && typeof d === 'object') ? d : {}
+  } catch { return {} }
+}
+
+/** 写 label 缓存（失败静默） */
+function saveLabelCache(cache) {
+  try {
+    writeFileSync(APP_LABELS_CACHE, JSON.stringify(cache, null, 2), 'utf-8')
+  } catch {}
+}
+
+/**
+ * 读单个 App 的中文名。返回 label 字符串或 null。
+ *
+ * 【为什么绕一圈 /data/local/tmp】
+ * Android shell（uid=2000）和 Termux（uid=u0_a286）是**两个沙箱**：
+ * - shell 写不了 Termux 的 $TMPDIR（实测 Permission denied）
+ * - Termux 读不了 /data/app（APK 所在，权限拒绝）
+ * /data/local/tmp 是**双方都能访问的中立区**（shell 可写、Termux 可读）。
+ * 所以流程是：shell 复制 APK 到中立区 → Termux 用 aapt 解析 → 删除中转文件。
+ */
+async function readAppLabel(pkg) {
+  const relay = `/data/local/tmp/ccm-label-${pkg.replace(/[^\w]/g, '_')}.apk`
+  try {
+    // 1. Android shell 把 APK 复制到中立区
+    const c = await sh(
+      `APK=$(pm path ${pkg} 2>/dev/null | head -1 | sed 's/^package://'); ` +
+      `[ -n "$APK" ] && cp "$APK" ${relay} && chmod 644 ${relay} && echo COPY_OK`,
+      30000)
+    if (!/COPY_OK/.test(c.out)) return null
+    // 2. Termux 侧读中转文件（直接用 execFile 跑 aapt，不走 shell 通道）
+    const { execFileSync } = await import('node:child_process')
+    const out = execFileSync('aapt', ['dump', 'badging', relay],
+      { encoding: 'utf-8', timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'] })
+    const m = out.match(/application-label:'([^']*)'/)
+    return m ? m[1] : null
+  } catch {
+    return null
+  } finally {
+    // 3. 清理中转文件（失败静默）
+    try { await sh(`rm -f ${relay}`, 10000) } catch {}
+  }
+}
+
 export class PhoneAppTool extends Tool {
   constructor() {
     super({
       name: 'phone_app',
-      description: '启动或切换到某个应用。可传包名，或用 list 列出已安装应用。',
+      description: '启动/切换应用，或列已安装应用。'
+        + 'list 加 labels:true 可显示中文名（只显示缓存里已有的，不现场扫描——'
+        + '实测全量扫描 71 个 App 要 60~90 秒且手机发烫，所以改成按需读）。'
+        + '要看某个应用的中文名用 action:label + package（单个约 0.5~1.3 秒，读完进缓存）。',
       input_schema: {
         type: 'object',
         properties: {
           package: { type: 'string', description: '包名，如 com.android.settings' },
-          action: { type: 'string', enum: ['launch', 'list', 'current', 'stop'], description: '默认 launch' },
-          filter: { type: 'string', description: 'list 时按关键词过滤' },
+          action: { type: 'string', enum: ['launch', 'list', 'current', 'stop', 'label'], description: '默认 launch；label=读单个应用的中文名' },
+          filter: { type: 'string', description: 'list 时按关键词过滤（包名或已缓存的中文名）' },
+          labels: { type: 'boolean', description: 'list 时显示中文名（默认 false，只显示缓存里已有的，不现场扫描）' },
         },
       },
     })
@@ -1235,10 +1307,67 @@ export class PhoneAppTool extends Tool {
       const flag = includeSystem ? '' : '-3'
       const r = await sh(`pm list packages ${flag} 2>/dev/null | sed 's/^package://' | sort`, 40000)
       let list = r.out.split('\n').map(s => s.trim()).filter(Boolean)
-      if (kw) list = list.filter(p => p.toLowerCase().includes(kw.toLowerCase()))
+
+      // labels:true → **只显示缓存里已有的中文名**，不现场扫描。
+      //
+      // 【为什么不做批量扫描】2026-10-04 实测：单个 label 要 0.5~1.3 秒
+      // （复制整个 APK 到 /data/local/tmp + aapt 解析，QQ 的 APK 有 400MB）。
+      // 71 个第三方 App 全扫要 60~90 秒，期间手机明显发热——
+      // 用户当场反馈「手机太烫了」，这条路不可行。
+      //
+      // 现在的策略：**按需读单个**（phone_app label <包名>），
+      // 缓存逐步积累，list 时只展示已缓存的。
+      const wantLabels = input.labels === true
+      let labels = {}
+      const kwLower = kw ? kw.toLowerCase() : ''
+
+      if (wantLabels) {
+        labels = loadLabelCache()
+        // filter 支持中文名（只对缓存里有的）
+        if (kw) {
+          list = list.filter(p => p.toLowerCase().includes(kwLower)
+            || String(labels[p] || '').toLowerCase().includes(kwLower))
+        }
+      } else if (kw) {
+        list = list.filter(p => p.toLowerCase().includes(kwLower))
+      }
+
       const tag = includeSystem ? '全部（含系统）' : '第三方'
-      return `已安装应用（${tag}）${list.length} 个${kw ? `（含 "${kw}"）` : ''}:\n` + list.slice(0, 80).join('\n') +
-        (!includeSystem && list.length >= 80 ? '\n（只显示前 80 个，加 filter 关键词可搜系统应用）' : '')
+      const show = list.slice(0, 80)
+      const lines = wantLabels
+        ? show.map(p => {
+            const l = labels[p]
+            return l ? `${p}  ${l}` : p
+          })
+        : show
+      let out = `已安装应用（${tag}）${list.length} 个${kw ? `（含 "${kw}"）` : ''}:\n` + lines.join('\n')
+      if (wantLabels) {
+        const known = list.filter(p => labels[p]).length
+        if (known === 0) {
+          out += '\n（中文名缓存为空。要看某个应用名：phone_app label <包名>）'
+        } else if (known < list.length) {
+          out += `\n（中文名只显示了缓存里已有的 ${known} 个；其余用 phone_app label <包名> 按需读）`
+        }
+      }
+      if (!includeSystem && list.length >= 80) {
+        out += '\n（只显示前 80 个，加 filter 关键词可搜系统应用）'
+      }
+      return out
+    }
+
+    // action: 'label' —— 读单个 App 的中文名（按需，约 0.5~1.3 秒）
+    if (action === 'label') {
+      if (!input.package) throw new Error('label 需要 package 参数')
+      if (!/^[\w.]+$/.test(input.package)) throw new Error('包名格式不合法')
+      const cache = loadLabelCache()
+      if (cache[input.package]) {
+        return `${input.package}  ${cache[input.package]}（缓存）`
+      }
+      const lbl = await readAppLabel(input.package)
+      if (!lbl) return `${input.package}  读不到中文名（APK 可能被加固或不存在）`
+      cache[input.package] = lbl
+      saveLabelCache(cache)
+      return `${input.package}  ${lbl}`
     }
     if (!input.package) throw new Error('launch/stop 需要 package 参数')
     if (!/^[\w.]+$/.test(input.package)) throw new Error('包名格式不合法')
