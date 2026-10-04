@@ -425,6 +425,8 @@ Web 端详情见 [`web/README.md`](./web/README.md) 与
 - [claude-desktop-app](https://github.com/pretend1111/claude-desktop-app)（作者 pretend1111）—— **Web 端界面基础**（对话流、Artifacts 面板、文档系统、侧边栏等）
 - [Anthropic Claude Code](https://claude.com/claude-code) —— 交互设计、工具协议、Agent 架构
 - [Codex](https://github.com/openai/codex) —— CLI 交互细节、prompt cache 实践
+- [Cordis](https://github.com/cordiverse/cordis) —— **DSH 插件宿主底层的插件框架**（dsh-host 直接使用官方包）
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) —— **DSH 插件生态的宿主与官方服务**（dsh-host 的兼容目标，28 个服务全部用其官方实现类）
 - [grok-build](https://github.com/xai-org/grok-build) —— hashline 行锚点编辑（HashlineEdit 工具的设计来源）
 - [Kimi Code](https://kimi.moonshot.cn/) —— 终端 UI 设计、工具输出窗口
 - [openclaw](https://github.com/openclaw/openclaw) —— Agent 编排与工具抽象
@@ -432,4 +434,15 @@ Web 端详情见 [`web/README.md`](./web/README.md) 与
 
 感谢这些项目的作者与社区。
 
+### 特别致谢：DSH 生态
+
+`dsh-host` 是**兼容层**，不是重写——它直接使用 DeepSeek Harness 官方发布的
+Cordis 框架与服务类（`@deepseek-ai/cordis`、`dsh-llm`、`dsh-tools` 等），
+以及社区的第三方插件（`dsh-account-pool`、`dsh-freeroute` 等）。
+
+感谢 DeepSeek AI 开源这套「一切皆插件」的架构，以及
+[DSH 插件社区](https://github.com/topics/dsh-plugin) 的作者们
+（dsh-account-pool 的作者 cliii.9527、dsh-freeroute 的作者 dushaobindoudou 等）。
+
 > 注：本项目为**独立实现**，与上述项目均无隶属关系，也未包含它们的代码。
+> dsh-host 通过 npm 依赖使用官方包，插件由各自的作者维护。
