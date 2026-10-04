@@ -381,9 +381,23 @@ export function extractImagePathsFromText(input) {
 export function buildMultimodalUserContent(text, imagePaths) {
   const content = []
   const t = (text || '').trim()
-  if (t) content.push({ type: 'text', text: t })
   const loaded = []
-  for (const p of imagePaths || []) {
+  // 先把路径整理出来（去重保序），路径要一并给模型
+  const paths = [...new Set((imagePaths || []).filter(Boolean))]
+  // 文本 + 路径说明合成一个 text 块。
+  //
+  // 【为什么要带路径】2026-10-04 用户要求：「当用户发图时，把路径也一并给 Agent」。
+  // 模型光看图不知道文件在哪，后续想引用（Read / ViewImage / 转发）只能靠猜。
+  // 带上路径后它能直接说「这张图存在 /sdcard/...，我可以再看」。
+  //
+  // 格式设计：说明文字在前（用户的意图），路径清单在后（元信息）——
+  // 单张直接写路径，多张用列表。路径用反引号包起来，避免被当成 Markdown 链接。
+  const pathLines = paths.length === 1
+    ? `（图片路径：${paths[0]}）`
+    : `（图片路径：\n${paths.map(p => `- ${p}`).join('\n')}）`
+  const merged = t ? `${t}\n\n${pathLines}` : pathLines
+  content.push({ type: 'text', text: merged })
+  for (const p of paths) {
     const block = loadImageBlock(p)
     content.push(block)
     loaded.push(p)

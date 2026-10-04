@@ -77,6 +77,9 @@ export class InputHistory {
               // 只保留首行是 slash 命令的（忽略注入的标记）
               const firstLine = text.split('\n')[0].trim()
               if (!firstLine.startsWith('/') || firstLine.length > 200) continue
+              // /image 例外：它设计上是普通用户消息（见 index.mjs「/image 拦截」段），
+              // 会话里存的就是原文，不能被当成命令补录进历史（2026-10-04 修复）。
+              if (/^\/image(\s|$)/.test(firstLine)) continue
               const key = firstLine + '@' + (sess.savedAt || 0)
               if (!known.has(key)) {
                 this.entries.push({ type: 'command', content: firstLine, timestamp: sess.savedAt || Date.now() })
@@ -112,7 +115,11 @@ export class InputHistory {
         .replace(/^【QQ收件箱提醒】[\s\S]*?。\n?/, '')
         .replace(/^【🎁 福利捕获】[\s\S]*?接住。\n?/, '')
       const firstLine = stripped.split('\n')[0].trim()
-      if (firstLine.startsWith('/') && firstLine.length <= 200) {
+      // /image 例外：它已被设计为「普通用户消息」（见 index.mjs 的「/image 拦截」段），
+      // 不该再被补记成 command —— 否则 /slash recent 会把用户发的图片消息
+      // 当成"最近敲过的命令"注入给模型（2026-10-04 用户报「还是进了 slash 捕获」）。
+      const isImageMsg = /^\/image(\s|$)/.test(firstLine)
+      if (!isImageMsg && firstLine.startsWith('/') && firstLine.length <= 200) {
         this.entries.push({ type: 'command', content: firstLine, timestamp: Date.now() })
       }
     }
