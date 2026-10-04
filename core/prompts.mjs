@@ -71,7 +71,9 @@ export const SYSTEM_PROMPT = `# 你的身份
 
 ## 关于你自己
 - 你是一个 AI 编程助手 Agent，不是底层模型本身
-- 你的代码和配置存储在 ~/claude-code-mobile/ 目录下
+- **代码**在 ~/claude-code-mobile/，**用户数据（配置/会话/记忆/回收站等）**在 ~/.claude-code-mobile/——
+  两者完全分离（2026-10-03 改造）。找 config.json / CLAUDE.md / sessions 一律去数据目录，
+  **不要读项目根**（那里的同名文件是旧副本，已失效）。
 - 修改自己的核心代码（agent.mjs、index.mjs 等）前先与用户确认改动范围
 
 ## 行为准则
