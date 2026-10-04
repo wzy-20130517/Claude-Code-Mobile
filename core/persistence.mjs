@@ -22,13 +22,48 @@ export class ClaudeMdLoader {
    * 用户可能在别的项目目录里也放一份（那个项目的约定）。
    * 数据目录那份是"全局记忆"，cwd 找到的是"本项目记忆"，两者都注入。
    */
+  /**
+   * 读一份 CLAUDE.md，超长时按「保留开头 + 后面列标题」压缩。
+   *
+   * 【2026-10-04 用户要求】原话：「md 会自动截断的，后面取 ## 标题行
+   * 展示给 Agent 以便翻阅」。
+   *
+   * 【为什么不能只硬截断】原来是 `.slice(0, 35000)` —— 一刀切，后面全丢，
+   * 而且是**静默的**：Agent 完全不知道文件里还有内容（用户 CLAUDE.md
+   * 实测 142k 字符，只有 25% 进提示词，剩下 107k 无声消失）。
+   * 超长时改成：
+   *   ① 前 FULL_LIMIT 字符**完整保留**（最新的记录通常在后面……但标题
+   *      能帮 Agent 知道有什么，需要时自己 Read 全文）
+   *   ② 剩余部分只提取 `## ` 开头的标题行，拼成目录附在后面
+   *   ③ 明确告诉 Agent「这是目录，要看正文用 Read 读原文件」
+   * 这样 Agent 既知道文件里有什么，又能在需要时自己去翻，不再"不知道丢了什么"。
+   *
+   * 【为什么留的是开头而不是结尾】CLAUDE.md 的约定是"越靠后越新"，
+   * 但开头放的是身份/规范类（工具铁律、思考语言要求），这些每轮都要用；
+   * 后面的具体 bug 记录/教训是"查阅型"，标题目录足够指路。
+   */
+  static readWithToc(filePath, fullLimit = 35000) {
+    const full = readFileSync(filePath, 'utf-8')
+    if (full.length <= fullLimit) return { content: full, truncated: false, total: full.length }
+    const head = full.slice(0, fullLimit)
+    const tail = full.slice(fullLimit)
+    // 提取尾部所有 ## 标题（# 一级标题少见，也收；### 太细不列）
+    const titles = tail.match(/^#{1,2} .+$/gm) || []
+    const toc = titles.length
+      ? `\n\n---\n\n【以下内容因超长未完整注入，这里是标题目录（共 ${titles.length} 条）。` +
+        `需要看某节正文时，用 Read 工具读原文件 ${filePath}】\n\n` + titles.join('\n')
+      : `\n\n---\n\n【文件超长（${full.length} 字符），超出部分未注入且无标题可列】`
+    return { content: head + toc, truncated: true, total: full.length, tocCount: titles.length }
+  }
+
   static load(cwd, maxDepth = 5) {
     const contents = []
     // ① 用户数据目录的全局 CLAUDE.md（优先注入）
     try {
       const globalMd = join(DATA_DIR, 'CLAUDE.md')
       if (existsSync(globalMd)) {
-        contents.push({ path: globalMd, content: readFileSync(globalMd, 'utf-8').slice(0, 35000) })
+        const r = ClaudeMdLoader.readWithToc(globalMd)
+        contents.push({ path: globalMd, content: r.content, truncated: r.truncated, total: r.total })
       }
     } catch {}
     // ② 从 cwd 向上找（跳过与①相同的路径，避免重复注入）
@@ -40,8 +75,12 @@ export class ClaudeMdLoader {
       // 最近的纠正记录全在截断线外读不到，于是同一个错反复犯（2026-08-30 实测发现）。
       // 35000 字符约 1.7 万 token，对 1M 上下文的模型可接受；精简后的 CLAUDE.md
       // （约 2 万字符）能完整进来。若以后再涨，优先精简文件而不是继续提上限。
+      // 【2026-10-04】超长部分不再无声丢弃 —— 见 readWithToc 的标题目录机制。
       if (existsSync(claudeMd) && !contents.some(c => c.path === claudeMd)) {
-        try { contents.push({ path: claudeMd, content: readFileSync(claudeMd, 'utf-8').slice(0, 35000) }) } catch {}
+        try {
+          const r = ClaudeMdLoader.readWithToc(claudeMd)
+          contents.push({ path: claudeMd, content: r.content, truncated: r.truncated, total: r.total })
+        } catch {}
       }
       const parent = join(dir, '..'); if (parent === dir) break; dir = parent
     }
