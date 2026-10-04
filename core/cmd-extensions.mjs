@@ -195,12 +195,38 @@ function colorizeUnifiedDiff(text) {
   return out.join('\n')
 }
 
+// ── /doctor 上下文警告阈值（对齐官方 claude-code）────────────────
+// 官方真值：utils/claudemd.ts MAX_MEMORY_CHARACTER_COUNT = 40000
+//          utils/statusNoticeHelpers.ts AGENT_DESCRIPTIONS_THRESHOLD = 15000
+//          utils/doctorContextWarnings.ts MCP_TOOLS_THRESHOLD = 25000
+// 超阈值说明这些内容每轮都在吃上下文，属于"没坏但该瘦身"的警告（非错误）。
+const MAX_MEMORY_CHARS = 40000
+const AGENT_DESC_TOKENS = 15000
+const MCP_TOOLS_TOKENS = 25000
+
+// 粗估 token：中文 1 字 ≈ 1 token，英文 4 字符 ≈ 1 token（官方 roughTokenCountEstimation 同思路）
+function roughTokens(s) {
+  if (!s) return 0
+  let cjk = 0, other = 0
+  for (const ch of s) {
+    if (ch.charCodeAt(0) > 0x2E80) cjk++
+    else other++
+  }
+  return cjk + Math.ceil(other / 4)
+}
+
 // /doctor — 诊断安装和配置问题
+// 输出结构对齐官方 screens/Doctor.tsx：分组标题 + 组内 ✓/✗/○ 检查项，
+// 末尾追加官方特有的「Context Usage Warnings」（CLAUDE.md / agent 描述 / MCP 工具 过大）。
 export function cmdDoctor(config, extras = {}) {
   const checks = []
   const ok = (name) => checks.push(`  ✓ ${name}`)
   const fail = (name, hint) => checks.push(`  ✗ ${name} — ${hint}`)
   const info = (name) => checks.push(`  ○ ${name}`)
+  // 分组标题（官方风格：空行 + 加粗标题）
+  const section = (title) => { checks.push(''); checks.push(title) }
+
+  section('Diagnostics')
 
   // 1. Node.js 版本
   const nodeV = process.version
@@ -262,8 +288,16 @@ export function cmdDoctor(config, extras = {}) {
   } catch {}
 
   // 9. skills 目录（项目 + 全局）
-  if (existsSync('./skills')) ok('项目 skills/ 存在')
-  else info('项目 skills/ 不存在（可选）')
+  // 项目 skills 实际在 .claude/skills（不是 ./skills），两处都看
+  {
+    const projSkills = [
+      join(process.cwd(), '.claude', 'skills'),
+      join(process.cwd(), 'skills'),
+    ]
+    const foundProj = projSkills.filter(p => existsSync(p))
+    if (foundProj.length) ok(`项目 skills/ 存在 (${foundProj[0]})`)
+    else info('项目 skills/ 不存在（可选）')
+  }
   try {
     const g = globalSkillsDir()
     if (existsSync(g)) ok(`全局 skills 存在 (${g})`)
@@ -272,9 +306,31 @@ export function cmdDoctor(config, extras = {}) {
     info('全局 skills 检查跳过')
   }
 
-  // 10. CLAUDE.md
-  if (existsSync('./CLAUDE.md')) ok('CLAUDE.md 存在')
-  else info('CLAUDE.md 不存在（可选，用 /memory 创建）')
+  // 10. CLAUDE.md（项目记忆）
+  // 【2026-10-04 修】原来看 './CLAUDE.md'（cwd 相对），但 /memory 写的是
+  // DATA_DIR/CLAUDE.md，两者不是同一个文件 —— 表现为「这里说不存在、
+  // Context Usage Warnings 又说 141k 字符」的自相矛盾。统一列全部真实路径。
+  {
+    const memPaths = [
+      join(DATA_DIR, 'CLAUDE.md'),                       // 用户级（/memory 写入处）
+      join(process.cwd(), 'CLAUDE.md'),                  // 项目级
+      join(homedir(), '.claude', 'CLAUDE.md'),           // 官方兼容路径
+    ]
+    const found = memPaths.filter(p => existsSync(p))
+    if (found.length) {
+      ok(`CLAUDE.md 存在 (${found.length} 处)`)
+      for (const p of found) {
+        try {
+          const chars = readFileSync(p, 'utf-8').length
+          checks.push(`      ${p} (${chars.toLocaleString()} 字符 / ${statSync(p).size.toLocaleString()} 字节)`)
+        } catch {}
+      }
+    } else {
+      info('CLAUDE.md 不存在（可选，用 /memory 创建）')
+    }
+  }
+
+  section('Providers')
 
   // 11. Provider 连通性探测（status-probe 复用：测各 Provider URL 的 host:port）
   try {
@@ -296,6 +352,8 @@ export function cmdDoctor(config, extras = {}) {
       checks.push(...lines)
     } else info('无 Provider 配置')
   } catch { info('Provider 探测跳过') }
+
+  section('Environment')
 
   // 11. hooks.json（配置在用户数据目录，2026-10-03 起）
   const hooksPath = resolveConfigPath('hooks.json')
@@ -338,13 +396,16 @@ export function cmdDoctor(config, extras = {}) {
     ok('termux-wake-lock 可用')
   } catch { fail('termux-wake-lock', '未安装') }
 
-  // 15. MCP 服务器（新增）
+  // 15. MCP 服务器（用真实路径 resolveConfigPath('mcp.json')，原来写死
+  //     './mcp-servers.json' 是错的——那个文件根本不存在，所以这项一直静默跳过）
   try {
-    const mcpConfigFile = './mcp-servers.json'
+    const mcpConfigFile = resolveConfigPath('mcp.json')
     if (existsSync(mcpConfigFile)) {
       const cfg = JSON.parse(readFileSync(mcpConfigFile, 'utf-8'))
-      const names = Object.keys(cfg.servers || cfg || {})
-      ok(`MCP 配置存在: ${names.join(', ') || '(空)'}`)
+      const servers = cfg.mcpServers || cfg.servers || {}
+      const names = Object.keys(servers)
+      const disabled = names.filter(n => servers[n]?.disabled)
+      ok(`MCP 配置: ${names.length} 个服务器${disabled.length ? `（${disabled.length} 个已禁用）` : ''}${names.length ? ' — ' + names.slice(0, 6).join(', ') : ''}`)
     } else info('无 MCP 配置（可选）')
   } catch (e) { fail('MCP 配置解析', e.message) }
 
@@ -361,6 +422,106 @@ export function cmdDoctor(config, extras = {}) {
       } else info('无自主任务')
     } else info('自主任务目录未创建')
   } catch {}
+
+  // ── 17. 上下文占用警告（对齐官方 Context Usage Warnings）──────
+  // 官方逻辑（utils/doctorContextWarnings.ts）：这三项都不算"错误"，
+  // 而是"每轮都在吃上下文、该瘦身了"的提醒。超阈值只警告、不判失败。
+  const warnings = []
+
+  // 17a. CLAUDE.md 过大（官方阈值 40000 字符）
+  try {
+    const memFiles = [
+      join(DATA_DIR, 'CLAUDE.md'),                      // 用户级（本项目记忆主文件）
+      join(process.cwd(), 'CLAUDE.md'),                 // 项目级
+      join(homedir(), '.claude', 'CLAUDE.md'),          // 官方兼容路径
+    ]
+    const large = []
+    let totalChars = 0
+    for (const f of memFiles) {
+      if (!existsSync(f)) continue
+      try {
+        const len = readFileSync(f, 'utf-8').length
+        totalChars += len
+        if (len > MAX_MEMORY_CHARS) large.push({ path: f, len })
+      } catch {}
+    }
+    if (large.length) {
+      warnings.push(`Large CLAUDE.md file detected (${large[0].len.toLocaleString()} chars > ${MAX_MEMORY_CHARS.toLocaleString()})`)
+      for (const f of large.slice(0, 3)) {
+        warnings.push(`  ${f.path}: ${f.len.toLocaleString()} chars`)
+      }
+    } else if (totalChars > 0) {
+      checks.push(`  ○ CLAUDE.md 共 ${totalChars.toLocaleString()} 字符（阈值 ${MAX_MEMORY_CHARS.toLocaleString()}）`)
+    }
+  } catch {}
+
+  // 17b. 自定义 agent 描述过大（官方阈值 15000 tokens）
+  // 这些描述每轮都进系统提示词，agent 多了会明显吃上下文。
+  try {
+    const agentDirs = [
+      join(process.cwd(), '.claude', 'agents'),
+      join(homedir(), '.claude-code-mobile', 'agents'),
+      join(homedir(), '.claude', 'agents'),
+    ]
+    let totalTokens = 0
+    const perAgent = []
+    for (const dir of agentDirs) {
+      if (!existsSync(dir)) continue
+      let files = []
+      try { files = readdirSync(dir).filter(f => f.endsWith('.md')) } catch { continue }
+      for (const f of files) {
+        try {
+          const raw = readFileSync(join(dir, f), 'utf-8')
+          const t = roughTokens(raw)
+          totalTokens += t
+          perAgent.push({ name: f.replace(/\.md$/, ''), tokens: t })
+        } catch {}
+      }
+    }
+    if (totalTokens > AGENT_DESC_TOKENS) {
+      warnings.push(`Large agent descriptions (~${totalTokens.toLocaleString()} tokens > ${AGENT_DESC_TOKENS.toLocaleString()})`)
+      perAgent.sort((a, b) => b.tokens - a.tokens)
+      for (const a of perAgent.slice(0, 5)) {
+        warnings.push(`  ${a.name}: ~${a.tokens.toLocaleString()} tokens`)
+      }
+      if (perAgent.length > 5) warnings.push(`  (${perAgent.length - 5} more custom agents)`)
+    } else if (perAgent.length) {
+      checks.push(`  ○ 自定义 agent ${perAgent.length} 个，共 ~${totalTokens.toLocaleString()} tokens（阈值 ${AGENT_DESC_TOKENS.toLocaleString()}）`)
+    }
+  } catch {}
+
+  // 17c. MCP 工具上下文过大（官方阈值 25000 tokens）
+  try {
+    const mcpConfigFile = resolveConfigPath('mcp.json')
+    if (existsSync(mcpConfigFile)) {
+      const cfg = JSON.parse(readFileSync(mcpConfigFile, 'utf-8'))
+      const servers = cfg.mcpServers || cfg.servers || {}
+      const names = Object.keys(servers)
+      let mcpToolTokens = 0
+      const perServer = []
+      for (const n of names) {
+        const s = servers[n] || {}
+        // 无法在诊断时实际连接 MCP 拉工具表，用配置里已知的提示估算
+        const est = roughTokens(JSON.stringify(s))
+        perServer.push({ name: n, tokens: est })
+        mcpToolTokens += est
+      }
+      if (mcpToolTokens > MCP_TOOLS_TOKENS) {
+        warnings.push(`Large MCP tools context (~${mcpToolTokens.toLocaleString()} tokens estimated > ${MCP_TOOLS_TOKENS.toLocaleString()})`)
+        perServer.sort((a, b) => b.tokens - a.tokens)
+        for (const s of perServer.slice(0, 5)) {
+          warnings.push(`  ${s.name}: ~${s.tokens.toLocaleString()} tokens`)
+        }
+      } else {
+        checks.push(`  ○ MCP 服务器 ${names.length} 个（配置估算 ~${mcpToolTokens.toLocaleString()} tokens，阈值 ${MCP_TOOLS_TOKENS.toLocaleString()}）`)
+      }
+    }
+  } catch {}
+
+  if (warnings.length) {
+    section('Context Usage Warnings')
+    for (const w of warnings) checks.push(`  ⚠ ${w}`)
+  }
 
   // 【2026-09-24 加】命令降级统计。
   //

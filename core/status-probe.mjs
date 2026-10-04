@@ -43,15 +43,35 @@ export function probeCommand(bin, args = [], opts = {}) {
   return { status, stdout, stderr, exitCode }
 }
 
-// 便捷：探测 HTTP 服务端口是否活着（用 bash -c 'echo > /dev/tcp/host/port' 或 nc）
+// 便捷：探测 HTTP 服务端口是否活着
 // 返回 { status, exitCode }
+//
+// 【2026-10-04 修】原实现用 `/system/bin/sh -c 'echo > /dev/tcp/host/port'`，
+// 但 Android 的 mksh 和 Termux 的 dash **都没有 /dev/tcp 这个 bash 特性**，
+// 命令必然报 "can't create /dev/tcp/...: No such file or directory" →
+// probePort 恒返回 unavailable → /doctor 里**所有 Provider 都显示 ✗**，
+// 包括正在正常工作的当前 Provider（假阳性，2026-10-04 实测发现）。
+//
+// 改用 nc（Termux 自带）做 TCP 连通性测试：`nc -z -w <秒> host port`
+// 退出码 0 = 端口开放。nc 不在时退回 /dev/tcp（bash 环境仍可用）。
 export function probePort(host, port, timeout = 3000) {
+  const secs = Math.max(1, Math.round(timeout / 1000))
+  // 优先 nc（Termux/Android 可用）
   try {
-    const r = execFileSync('/system/bin/sh', ['-c', `echo > /dev/tcp/${host}/${port}`], {
-      encoding: 'utf-8', timeout, stdio: ['ignore', 'pipe', 'ignore'],
+    execFileSync('nc', ['-z', '-w', String(secs), String(host), String(port)], {
+      encoding: 'utf-8', timeout: timeout + 1000, stdio: ['ignore', 'pipe', 'ignore'],
     })
     return { status: 'available', exitCode: 0 }
   } catch (e) {
+    // nc 不存在（ENOENT）→ 退回 /dev/tcp 试一次
+    if (e?.code === 'ENOENT') {
+      try {
+        execFileSync('bash', ['-c', `echo > /dev/tcp/${host}/${port}`], {
+          encoding: 'utf-8', timeout, stdio: ['ignore', 'pipe', 'ignore'],
+        })
+        return { status: 'available', exitCode: 0 }
+      } catch {}
+    }
     return { status: 'unavailable', exitCode: typeof e?.status === 'number' ? e.status : -1 }
   }
 }
