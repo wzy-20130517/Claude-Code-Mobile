@@ -7,6 +7,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSy
 import { join, dirname, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { DATA_DIR } from './paths.mjs'
+import { extractHeadingLines } from './persistence.mjs'
 
 // 持久化路径
 const DEFAULT_HISTORY_FILE = join(homedir(), '.claude-code-mobile', 'input-history.json')
@@ -325,14 +326,12 @@ export class MemoryTool extends Tool {
     if (action === 'toc') {
       if (!existsSync(path)) return `${this.memoryLabel} 不存在`
       const full = readFileSync(path, 'utf-8')
-      const lines = full.split('\n')
-      const out = []
-      let idx = 0
-      for (const l of lines) {
-        // 只列 ## 和 # 级标题（### 太细，进目录会淹掉主干）
-        if (/^#{1,2} /.test(l)) { idx++; out.push(`${idx}. ${l}`) }
-      }
-      if (!out.length) return `${this.memoryLabel} 没有 ## 标题（共 ${full.length} 字符）`
+      // 【排除代码块】2026-10-04：CLAUDE.md 里的 ``` shell 片段中的注释
+      // （# 1) 换 token、# 常用操作）会被当成标题——实测混进 7 条假标题。
+      // 统一走 extractHeadingLines（跟踪围栏开闭状态）。
+      const heads = extractHeadingLines(full)
+      if (!heads.length) return `${this.memoryLabel} 没有 ## 标题（共 ${full.length} 字符）`
+      const out = heads.map((h, i) => `${i + 1}. ${h}`)
       return `${this.memoryLabel} 标题目录（共 ${out.length} 节，文件 ${full.length} 字符）：\n\n`
         + out.join('\n')
         + `\n\n用 action="section" + title 取某一节完整正文。`
@@ -344,10 +343,21 @@ export class MemoryTool extends Tool {
       if (!kw) return '错误: action=section 需要 title 参数（标题关键词）'
       const full = readFileSync(path, 'utf-8')
       const lines = full.split('\n')
-      // 找出所有标题行的位置（# / ## 级）
+      // 找出所有标题行的位置（# / ## 级，**跳过代码块内的假标题**）
+      const headTexts = new Set(extractHeadingLines(full))
       const heads = []
+      let inFence = false, fenceChar = ''
       for (let i = 0; i < lines.length; i++) {
-        if (/^#{1,2} /.test(lines[i])) heads.push({ line: i, text: lines[i] })
+        const t = lines[i].trim()
+        const fm = /^(`{3,}|~{3,})/.exec(t)
+        if (fm) {
+          const ch = fm[1][0]
+          if (!inFence) { inFence = true; fenceChar = ch }
+          else if (ch === fenceChar) { inFence = false; fenceChar = '' }
+          continue
+        }
+        if (inFence) continue
+        if (headTexts.has(t)) heads.push({ line: i, text: t })
       }
       // 模糊匹配：优先完整包含，其次去 # 后包含，最后不区分大小写
       const kwLower = kw.toLowerCase()

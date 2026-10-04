@@ -5,6 +5,44 @@ import { backupToTrash } from './trash.mjs'
 import { atomicWrite } from './atomic.mjs'
 import { DATA_DIR } from './paths.mjs'
 
+/**
+ * 从 Markdown 文本里提取标题行（# / ## 级），**跳过代码块内部**。
+ *
+ * 【为什么需要】2026-10-04 实测：CLAUDE.md 里常有 ``` 围栏的 shell 片段，
+ * 里面的注释（`# 1) 换 token`、`# 常用操作`）会被 `^#{1,2} ` 正则误判成标题——
+ * 142k 文件里混进 7 条假标题，污染目录、还会让 Agent 去"取"不存在的章节。
+ *
+ * 【为什么不只认 ## 】CLAUDE.md 的一级标题 `# CLAUDE.md` 也是有效标题；
+ * 但代码块里的 `#` 注释必须排除。判定方式：跟踪 ``` / ~~~ 围栏的开闭状态。
+ * 缩进的围栏（列表里嵌的代码块）同样识别——先 trim 再判断。
+ *
+ * @param {string} text
+ * @param {number} maxLevel 最多认到几级（默认 2 = # 和 ##）
+ * @returns {string[]} 标题行原文（含前导 #）
+ */
+export function extractHeadingLines(text, maxLevel = 2) {
+  const out = []
+  let inFence = false
+  let fenceChar = ''
+  for (const raw of String(text ?? '').split('\n')) {
+    const line = raw.trimEnd()
+    const t = line.trim()
+    // 代码围栏开闭（``` 或 ~~~，至少 3 个）
+    const fenceMatch = /^(`{3,}|~{3,})/.exec(t)
+    if (fenceMatch) {
+      const ch = fenceMatch[1][0]
+      if (!inFence) { inFence = true; fenceChar = ch }
+      else if (ch === fenceChar) { inFence = false; fenceChar = '' }
+      continue
+    }
+    if (inFence) continue
+    // 标题判定：^#{1,maxLevel} + 空格 + 内容
+    const m = /^(#{1,6})\s+(.+)$/.exec(t)
+    if (m && m[1].length <= maxLevel) out.push(t)
+  }
+  return out
+}
+
 export class ClaudeMdLoader {
   /**
    * 加载 CLAUDE.md（项目记忆）。
@@ -48,7 +86,10 @@ export class ClaudeMdLoader {
     const head = full.slice(0, fullLimit)
     const tail = full.slice(fullLimit)
     // 提取尾部所有 ## 标题（# 一级标题少见，也收；### 太细不列）
-    const titles = tail.match(/^#{1,2} .+$/gm) || []
+    // 【排除代码块】2026-10-04：CLAUDE.md 里常有 ``` 围栏的 shell 片段，
+    // 里面的注释（# 1) 换 token、# 常用操作 之类）会被 `^# ` 正则误认成标题——
+    // 实测 142k 文件里混进 7 条假标题，污染目录、误导 Agent 去取不存在的"章节"。
+    const titles = extractHeadingLines(tail)
     const toc = titles.length
       ? `\n\n---\n\n【以下内容因超长未完整注入，这里是标题目录（共 ${titles.length} 条）。` +
         `需要看某节正文时，用 Read 工具读原文件 ${filePath}】\n\n` + titles.join('\n')
