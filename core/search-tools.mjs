@@ -54,11 +54,17 @@ const yieldLoop = () => new Promise(r => setImmediate(r))
 async function walkBounded(root, visit) {
   let visited = 0
   const stack = [root]
+  // ★ 2026-10-04 修复：root 自身位于「跳过前缀」下时，豁免该前缀。
+  // 否则用户显式指定 /sdcard/... 作为搜索根时，第一个循环就 continue，
+  // 永远返回空 —— 这是 Glob/Grep/CodeSearch 对默认工作区
+  // （/sdcard/Download/claude-workspace）全部失效的根因（用户实测发现）。
+  // 防卡死三件套不受影响：MAX_WALK_ENTRIES 上限、SKIP_DIR_NAMES、定期 yield 全部保留。
+  const exempt = SKIP_DIR_PREFIXES.find(p => root === p || root.startsWith(p + '/'))
   while (stack.length > 0) {
     if (visited >= MAX_WALK_ENTRIES) return { stopped: true, visited }
     const dir = stack.pop()
-    // 跳过已知慢/大目录
-    if (SKIP_DIR_PREFIXES.some(p => dir === p || dir.startsWith(p + '/'))) continue
+    // 跳过已知慢/大目录（用户显式指定的 root 所在前缀除外）
+    if (SKIP_DIR_PREFIXES.some(p => p !== exempt && (dir === p || dir.startsWith(p + '/')))) continue
     let entries
     try { entries = readdirSync(dir) } catch { continue }
     for (const e of entries) {
