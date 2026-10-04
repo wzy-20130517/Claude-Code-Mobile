@@ -279,18 +279,24 @@ export class MemoryTool extends Tool {
       description: `把重要信息写入 ${memoryLabel} 项目记忆文件（跨会话保留）。`
         + '适用场景：用户说「记一下」「记住这个」「加到 CLAUDE.md」、'
         + '重要的代码风格约定、构建命令、用户偏好、错误教训。'
-        + '不要记琐碎对话内容，只记对未来对话有用的项目级元信息。',
+        + '不要记琐碎对话内容，只记对未来对话有用的项目级元信息。'
+        + '\n文件很大时（系统提示词里只给了标题目录），用 action="toc" 列目录、'
+        + 'action="section" + title 取某一节完整正文（比 Read 整个文件省上下文）。',
       input_schema: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['append', 'show', 'init'],
-            description: 'append=追加内容到 CLAUDE.md，show=查看当前内容，init=如果不存在则创建',
+            enum: ['append', 'show', 'init', 'toc', 'section'],
+            description: 'append=追加内容，show=看全文，init=创建，toc=列标题目录，section=按标题取一节',
           },
           text: {
             type: 'string',
             description: '要追加的文本（action=append 时必填）。会被原样写入文件末尾。',
+          },
+          title: {
+            type: 'string',
+            description: 'action=section 时必填：标题关键词（模糊匹配，取第一个命中的 ## 小节）',
           },
         },
         required: ['action'],
@@ -314,6 +320,58 @@ export class MemoryTool extends Tool {
       if (existsSync(path)) return `${this.memoryLabel} 已存在，用 action=append 追加内容`
       writeFileSync(path, `# ${this.memoryLabel}\n\n本项目的工作约定和笔记。\n`, 'utf-8')
       return `已创建 ${this.memoryLabel}`
+    }
+
+    if (action === 'toc') {
+      if (!existsSync(path)) return `${this.memoryLabel} 不存在`
+      const full = readFileSync(path, 'utf-8')
+      const lines = full.split('\n')
+      const out = []
+      let idx = 0
+      for (const l of lines) {
+        // 只列 ## 和 # 级标题（### 太细，进目录会淹掉主干）
+        if (/^#{1,2} /.test(l)) { idx++; out.push(`${idx}. ${l}`) }
+      }
+      if (!out.length) return `${this.memoryLabel} 没有 ## 标题（共 ${full.length} 字符）`
+      return `${this.memoryLabel} 标题目录（共 ${out.length} 节，文件 ${full.length} 字符）：\n\n`
+        + out.join('\n')
+        + `\n\n用 action="section" + title 取某一节完整正文。`
+    }
+
+    if (action === 'section') {
+      if (!existsSync(path)) return `${this.memoryLabel} 不存在`
+      const kw = String(input.title || '').trim()
+      if (!kw) return '错误: action=section 需要 title 参数（标题关键词）'
+      const full = readFileSync(path, 'utf-8')
+      const lines = full.split('\n')
+      // 找出所有标题行的位置（# / ## 级）
+      const heads = []
+      for (let i = 0; i < lines.length; i++) {
+        if (/^#{1,2} /.test(lines[i])) heads.push({ line: i, text: lines[i] })
+      }
+      // 模糊匹配：优先完整包含，其次去 # 后包含，最后不区分大小写
+      const kwLower = kw.toLowerCase()
+      let hit = heads.find(h => h.text.includes(kw))
+      if (!hit) hit = heads.find(h => h.text.replace(/^#+\s*/, '').toLowerCase().includes(kwLower))
+      if (!hit) {
+        // 没命中 → 给出相近的候选（帮助模型修正关键词）
+        const near = heads.filter(h => h.text.toLowerCase().includes(kwLower.slice(0, 4))).slice(0, 5)
+        return `未找到含「${kw}」的小节。`
+          + (near.length ? `\n相近的：\n` + near.map(h => `  ${h.text}`).join('\n') : '')
+          + `\n用 action="toc" 看完整目录。`
+      }
+      // 取该标题到下一个同级/更高级标题之间的内容
+      const startLine = hit.line
+      const startLevel = (hit.text.match(/^#+/) || ['#'])[0].length
+      let endLine = lines.length
+      for (const h of heads) {
+        if (h.line <= startLine) continue
+        const lvl = (h.text.match(/^#+/) || ['#'])[0].length
+        if (lvl <= startLevel) { endLine = h.line; break }
+      }
+      const body = lines.slice(startLine, endLine).join('\n').trimEnd()
+      const more = endLine < lines.length ? `\n\n（下一节：${lines[endLine]}）` : ''
+      return body + more
     }
 
     if (action === 'append') {
