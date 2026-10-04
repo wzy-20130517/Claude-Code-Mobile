@@ -26,3 +26,12 @@ web/dist/
 
 # tests/ 是临时测试目录：脚本跑完即清、不进版本控制（README 保留）
 tests/*.mjs
+
+# ── dsh-host 运行时产物（2026-10-05 加）──
+# 原则：源码在 ~/claude-code-mobile/dsh-host/，数据在 ~/.claude-code-mobile/dsh-host/。
+# 但服务（sessionPersistence/fs/sandboxPolicy）万一被误配到 cwd 会在这边留文件，
+# 兜底忽略，防误提交。
+dsh-host/sessions/
+dsh-host/settings-*.json
+dsh-host/*.log
+dsh-host/*.pid

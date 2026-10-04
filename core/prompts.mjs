@@ -226,6 +226,16 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
   改的是 mcp.json 的 disabled 字段。注意 MCP **工具**不做成 slash 命令，它们走 mcp_<server>_<tool> 工具通道。
 - **/pexels**：管理 FindImage 用的图库 key。\`/pexels\` 看状态、\`set <key>\` 配置（写 ~/.claude-code-mobile/.env，当前会话立即生效）、
   \`test\` 测连通性和剩余额度、\`clear\` 清空。免费额度 200 次/小时、20000 次/月。
+- **/plugin**（2026-10-04 加，对齐官方 Claude Code 的 /plugin）：管理**插件**。
+  **/plugins 是它的别名**（官方 \`aliases: ['plugins','marketplace']\` 同款做法），
+  旧的内置插件系统（core/plugins.mjs）已废弃。
+  当前插件体系是 **DSH 生态**（DeepSeek Harness，Cordis 插件框架），CCM 通过 \`dsh-host\` 兼容层加载。
+  \`/plugin\` 看宿主状态（插件 + provider）· \`/plugin providers\` 看 provider 的 CCM 接入地址 ·
+  \`/plugin bundles\` 看可安装插件包 · \`/plugin install <包名>\` 装并加载 · \`/plugin remove <包名>\` 卸载 ·
+  \`/plugin enable|disable <包名>\` 启停（重启宿主生效）。
+  宿主源码 \`~/claude-code-mobile/dsh-host/\`，用户数据 \`~/.claude-code-mobile/dsh-host/\`，
+  启停 \`bash ~/claude-code-mobile/dsh-host/start.sh start|stop|restart|status\`。
+  与 \`/mcp\` 分工：/mcp 管 MCP 服务器（协议级工具接入），/plugin 管 Cordis 插件（常驻宿主进程）。
 - **/update**（2026-10-03 加）：检查并更新到最新版。
   \`/update\` 检查+更新 · \`/update check\` 只看有没有新版 · \`/update mirror <url>\` 设镜像前缀（默认 gh-proxy.com）。
   启动时会自动静默检查一次（GitHub API 抓最新 tag 比对当前版本），有新版打**黄色提示**。
@@ -514,6 +524,43 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
   **传的是新的上限值，不是增量**——当前 10 轮想再要 5 轮就传 turns:15，传 5 会因"只能增不能减"被拒。
   仅当预算即将耗尽、且剩余工作确实必要时用。想提前收工用 GoalStatus，不要用它。
 
+## DSH 插件工具（插件宿主）
+- **DshPlugin**: 管理 DSH 插件宿主（dsh-host）里的插件，对齐官方 plugin_manager 的 action 语义。
+  \`action=list_plugins\` 列已加载插件与 provider 状态（支持 offset/limit 分页）·
+  \`action=list_bundles\` 列可安装插件包 · \`action=set_plugin\` 启停（target + enabled）·
+  \`action=install_bundle\` 安装（target，npm 装包 + 热加载）· \`action=remove_bundle\` 卸载 ·
+  \`action=providers\` 列 provider 的 CCM 接入地址（baseUrl/apiKey）· \`action=status\` 宿主健康检查。
+  **宿主未运行时**：工具和 \`/plugin\` 命令会**自动拉起**（约 14 秒）；
+  也可手动 \`bash ~/claude-code-mobile/dsh-host/start.sh start\`。
+  用户也可用 \`/plugin\` 系列命令做同样的事。
+
+### 宿主能力（2026-10-04 扩展）
+- **架构**：官方 Cordis 运行时 + 官方服务类，**已装 116 个官方包**（全 dsh-base 集）。
+- **已提供 28 个服务**：llm / settings / timer / credentials / subprocess / webServer /
+  systemPrompt / tools / skills / fs / shell / agents / jobs / sessions /
+  sessionProjections / workspaceRegistry / goals / web / sandbox / sandboxPolicy /
+  storage / shellEnv / sessionPersistence / commands / deepseekLlmApiExtensions /
+  ptcRuntime / workflowEngine / subagents / typert。
+  外加 Cordis 核心 18 个 API（logger/on/effect/plugin/inject/waterfall 等）。
+  **官方插件实测 31/31 活跃**（0 挂起 0 失败），工具链实际可执行
+  （实测：插件注册的 read 工具读到文件内容、bash 工具跑通 shell 命令）。
+  **注意抽象/实现之分**：shell/subprocess/fs/jobs 等服务的抽象类只有 constructor，
+  必须用 \`*-local\` 实现类（如 LocalBashExecutor），否则插件报 \`xxx is not a function\`。
+  **依赖顺序**：SystemPrompt→ToolRuntime、SessionProjections→GoalService。
+- **fiber 状态怎么看**：cordis 的 inject 是"等待就绪"，缺依赖时插件**挂起**（state=0）不报错。
+  判断插件真的在工作要看 fiber.state（2=活跃）。
+- **实测可加载（18/20）**：
+  - 官方：\`dsh-account-pool\`（WorkBuddy/Trae 账号池）、\`dsh-freeroute\`（免费额度聚合：
+    OpenCode Zen / OpenRouter / SenseNova 等，自带 /freeroute/v1 OpenAI 端点）、
+    \`dsh-goal\`、\`dsh-skill\`、\`dsh-workspace\`、\`dsh-token-meter\` 等
+  - 第三方：\`dsh-plugin-model-proxy\`、\`dsh-plugin-mgr\`、\`dsh-plugin-observatory\`、
+    \`dsh-find-plugin\`、\`dsh-plugin-tool-management\`、\`dsh-plugin-guide\`、
+    \`@goodandready/dsh-time-machine\`、\`@goodandready/dsh-context-lens\`、
+    \`@goodandready/dsh-shadow-auditor\`、\`dsh-plan-and-execute\`
+- **provider 两种后端**：shim（PiAiAdapter 型，如 account-pool）或 webEndpoint
+  （标准 adapter + webServer，如 freeroute）。CCM 统一走门面
+  \`http://127.0.0.1:8790/p/<providerId>/v1\` 接入，apiKey 用 \`dsh-local\`。
+
 ## MCP 工具（如果配置了 MCP 服务器）
 格式为 mcp_服务器名_工具名，直接使用即可。
 
@@ -620,6 +667,7 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
 | AgentStatus | 查看后台子 Agent 生命周期、耗时、turn、输出尾部和最终结果；优先用它，不要用 BashOutput 轮询 |
 | 执行程序内 slash 命令 | CommandExec | Bash 调 node 跑命令 |
 | 收发邮件 | mcp_mail-qq_* 工具 | curl IMAP/SMTP |
+| 管理 DSH 插件 | DshPlugin（或 /plugin） | 手改 plugins.json / npm 命令 |
 | 切换字体 | CommandExec font | 发送 OSC 序列 |
 | 状态栏样式 | CommandExec statusline | 修改 session 配置 |
 | 查 git 状态/diff/log | GitStatus / GitDiff / GitLog | git status / git diff 命令 |

@@ -1,3 +1,20 @@
+// Claude Code Mobile - 内置插件系统【已废弃，2026-10-04】
+//
+// 【为什么废弃】
+// 官方 Claude Code 的 /plugin 管的是"插件市场"里的插件；CCM 现在的插件体系
+// 是 DSH 生态（Cordis 插件框架），通过 dsh-host 兼容层加载，走 /plugin 命令。
+// 这套旧的 builtinPlugins 系统只注册过一个 keepalive 占位（无实际功能绑定），
+// 而 /keepalive 是独立命令（index.mjs 的 case 'keepalive'），不依赖本模块。
+//
+// 【保留原因】
+// 不激进删除——engine-setup.mjs 还在调 registerBuiltinPlugin（无副作用的空注册），
+// cmd-extensions.mjs 还 import 了 listPlugins（但已不被调用）。
+// 彻底清理要连这两处一起改，属于独立任务。
+//
+// 【现状】
+// /plugins 命令已改指向新的 DSH 插件实现（index.mjs 的 case 'plugins'），
+// 本模块的函数实际上不再被用户路径触达。
+
 // Claude Code Mobile - 内置插件系统
 // 支持注册功能模块，可启用/禁用，持久化到 config.json
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'

@@ -85,6 +85,10 @@ Claude Code Mobile（简称 CCM）是一个**运行在 Android 手机上的命�
 
 ### 🔌 扩展性
 
+- **DSH 插件（v0.8.220+）**：兼容 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+  插件生态——官方 Cordis 框架 + 28 个官方服务，实测 **31 个官方插件 + 10 个第三方插件**可加载。
+  用 `/plugin` 管理（装/卸/启停），插件还能给 CCM 提供模型渠道
+  （如 `dsh-freeroute` 的免费额度聚合、`dsh-account-pool` 的多账号池）。详见 `dsh-host/README.md`
 - **MCP 支持**：接入任意 Model Context Protocol 服务器（Playwright、邮件、通知等）
 - **Skills 系统**：可插拔的技能包——放 `skills/<名字>/SKILL.md` 即生效，
   也可放 `~/.claude/skills/`（全局）
@@ -274,6 +278,12 @@ claude-code-mobile/
 │   │   ├── components/    # 45 个组件（对话/Artifacts/文档/设置…）
 │   │   └── ...            # 页面、状态、API 客户端
 │   └── public/            # 静态资源（Artifacts 示例库等）
+│
+├── dsh-host/              # DSH 插件宿主（兼容 DeepSeek Harness 插件生态）
+│   ├── plugin-loader.mjs  # 宿主核心（官方 Cordis + Loader + 插件挂载）
+│   ├── services.mjs       # 服务注册表（28 服务，数据驱动 + 依赖拓扑 + 容错）
+│   ├── server.mjs         # 门面服务（:8790，控制 API + provider 转发）
+│   └── start.sh           # 启停脚本（含就绪检测）
 │
 ├── tools/                 # 辅助脚本（MCP server、check-sync 等）
 ├── assets/                # 字体等静态资源

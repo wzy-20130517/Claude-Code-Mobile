@@ -133,7 +133,7 @@ GitHub
 /review       工作区审查（git/大文件/TODO/安全）
 /workflow     Explore→Plan→Implement→Review 说明
 /skills       Skills 摘要（<关键词> 搜索，page <页> 分页）
-/plugins      已加载插件
+/plugin      插件（DSH 生态宿主；/plugins 别名）
 /permissions  工具权限规则（allow/deny/ask）
 /permissions mode <default|acceptEdits|plan|bypassPermissions>
 /context7     Context7 MCP（setup/enable/disable/status）
@@ -216,6 +216,14 @@ Ctrl+G               删除当前翻到的排队消息（发错了不用干等�
       status                          附带每个服务器的工具名
       tools [名字]                    看工具详情
       enable|disable <名字>           启/禁用（disable 立即停进程，enable 需重启）
+/plugin   插件（DSH 生态，Cordis 插件框架；/plugins 是别名）
+      /plugin                        看宿主状态（服务数 / 插件活跃度 / provider）
+      providers                      看 provider 的 CCM 接入地址
+      bundles                        看可安装插件包（含描述与状态）
+      install <包名>                 安装并加载（如 dsh-freeroute）
+      remove <包名>                  卸载（npm 包保留）
+      enable|disable <包名>          启停（重启宿主生效）
+      宿主未运行时自动拉起；源码在 ~/claude-code-mobile/dsh-host/
 /pexels   图库搜索 key（FindImage 用）
       set <key> / test / clear        test 会显示剩余额度
 /keepalive  息屏保活（on|off|auto on|auto off，自动保活默认开）

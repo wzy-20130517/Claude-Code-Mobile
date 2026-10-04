@@ -174,5 +174,180 @@ export function makeIntegrationCommands(ctx) {
         + `  /mcp disable <名字> 禁用（立即停进程）\n`
         + `配置文件: mcp.json`
     },
+
+    /**
+     * /plugin — 管理插件（对齐官方 Claude Code 的 /plugin）
+     *
+     * 当前插件体系是 DSH 生态（DeepSeek Harness，Cordis 插件框架），
+     * CCM 通过 dsh-host 兼容层加载它们（如 dsh-account-pool 多账号池）。
+     *
+     * 与 /mcp 的分工：
+     *   /mcp 管 MCP 服务器（协议级工具接入）
+     *   /plugin 管插件（Cordis 插件，常驻宿主进程）
+     */
+    async plugin(args) {
+      const { C } = ctx
+      const sub = String(args[0] || '').toLowerCase()
+      const HOST = process.env.DSH_HOST_URL ?? 'http://127.0.0.1:8790'
+      const START_HINT = 'bash ~/claude-code-mobile/dsh-host/start.sh start'
+
+      const ctrl = async (path, options = {}) => {
+        try {
+          const res = await fetch(`${HOST}/control${path}`, {
+            method: options.method ?? 'GET',
+            headers: options.headers,
+            body: options.body,
+            signal: AbortSignal.timeout(options.timeout ?? 15000),
+          })
+          const text = await res.text()
+          try { return { ok: res.ok, status: res.status, data: JSON.parse(text) } }
+          catch { return { ok: res.ok, status: res.status, data: text } }
+        } catch (err) {
+          return { ok: false, status: 0, error: err.message }
+        }
+      }
+
+      // 自愈：宿主未运行时自动拉起（手机重启/进程被杀后不用手动 start）
+      const ensureHost = async () => {
+        const probe = await ctrl('/status', { timeout: 3000 })
+        if (probe.ok) return true
+        try {
+          const { execFile } = await import('node:child_process')
+          const { promisify } = await import('node:util')
+          const { homedir } = await import('node:os')
+          const { join } = await import('node:path')
+          // start.sh 内部会等到 API 就绪才返回，不用再固定 sleep
+          await promisify(execFile)('bash', [join(homedir(), 'claude-code-mobile', 'dsh-host', 'start.sh'), 'start'], { timeout: 60000 })
+          // 兜底探测
+          for (let i = 0; i < 5; i++) {
+            const p2 = await ctrl('/status', { timeout: 2000 })
+            if (p2.ok) return true
+            await new Promise((r) => setTimeout(r, 1000))
+          }
+          return false
+        } catch { return false }
+      }
+
+      if (!sub || sub === 'status' || sub === 'list') {
+        const r = await ctrl('/status')
+        if (!r.ok) {
+          return `DSH 宿主未运行（${r.error ?? `HTTP ${r.status}`}）\n`
+            + `启动: ${START_HINT}\n`
+            + `宿主源码: ~/claude-code-mobile/dsh-host/`
+        }
+        const d = r.data
+        const svcCount = d.services?.count ?? 0
+        const lines = ['DSH 插件宿主：']
+        lines.push(`  ${C.green}运行中${C.reset} · 服务 ${svcCount} 个 · 插件 ${d.plugins.length} 个 · provider ${d.providers.length} 个`)
+        lines.push('')
+        for (const p of d.plugins) {
+          const st = d.pluginStates?.[p]
+          // fiber.state：2=活跃，0=挂起等依赖（cordis inject 语义）
+          const badge = st?.active
+            ? `${C.green}活跃${C.reset}`
+            : `${C.yellow}挂起${C.reset}`
+          lines.push(`  插件  ${p}  ${badge}`)
+        }
+        for (const p of d.providers) {
+          const be = p.ready
+            ? `${C.green}ready${C.reset}`
+            : `${C.yellow}未就绪${C.reset}`
+          lines.push(`  provider  ${p.id} "${p.name}" ${be} models=${p.modelCount}`)
+        }
+        if (d.services?.failed?.length) {
+          lines.push('')
+          lines.push(`${C.yellow}服务注册失败: ${d.services.failed.map(f => f.name).join(', ')}${C.reset}`)
+        }
+        lines.push('')
+        lines.push(`${C.dim}/plugin providers 看接入地址 · /plugin bundles 看可用插件 · /plugin install <包名> 安装${C.reset}`)
+        return lines.join('\n')
+      }
+
+      if (sub === 'providers') {
+        if (!(await ensureHost())) return `DSH 宿主未运行，自动拉起失败\n手动启动: ${START_HINT}`
+        const r = await ctrl('/providers')
+        if (!r.ok) return `DSH 宿主未运行（${r.error ?? `HTTP ${r.status}`}）\n启动: ${START_HINT}`
+        const list = r.data.providers ?? []
+        if (list.length === 0) return 'DSH: 没有已注册的 provider'
+        const lines = ['DSH provider（CCM 接入地址）：']
+        for (const p of list) {
+          lines.push('')
+          lines.push(`  ${p.id}  (${p.name})`)
+          lines.push(`    baseUrl : ${p.ccmBaseUrl}`)
+          lines.push(`    apiKey  : ${p.ccmApiKey}`)
+          const backend = p.shimReady ? 'shim' : (p.webEndpoint ? 'webEndpoint' : '未就绪')
+          lines.push(`    backend : ${backend}${p.ready ? '' : '（无账号/未配置上游）'}`)
+          if (p.models?.length) lines.push(`    models  : ${p.models.join(', ')}`)
+        }
+        lines.push('')
+        lines.push(`${C.dim}接入: /config provider add dsh-<id> url=<baseUrl> model=<模型> key=${list[0]?.ccmApiKey ?? ''}${C.reset}`)
+        return lines.join('\n')
+      }
+
+      if (sub === 'bundles') {
+        if (!(await ensureHost())) return `DSH 宿主未运行，自动拉起失败\n手动启动: ${START_HINT}`
+        const r = await ctrl('/bundles')
+        if (!r.ok) return `DSH 宿主未运行（${r.error ?? `HTTP ${r.status}`}）\n启动: ${START_HINT}`
+        const list = r.data.bundles ?? []
+        const lines = ['DSH 插件包：']
+        for (const b of list) {
+          const st = b.loaded ? `${C.green}已加载${C.reset}` : b.installed ? `${C.yellow}已装未加载${C.reset}` : '未安装'
+          lines.push(`  ${b.name}  ${st}`)
+          lines.push(`    ${b.description}`)
+        }
+        lines.push('')
+        lines.push(`${C.dim}/plugin install <包名> 安装并加载${C.reset}`)
+        return lines.join('\n')
+      }
+
+      if (sub === 'install') {
+        const spec = String(args[1] || '').trim()
+        if (!spec) return '用法: /plugin install <插件包名>（如 dsh-account-pool）'
+        const r = await ctrl('/install', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ spec }),
+          timeout: 240000,
+        })
+        if (!r.ok) return `安装失败: ${JSON.stringify(r.data ?? r.error)}`
+        const d = r.data
+        return d.loaded
+          ? `已安装并加载: ${spec}`
+          : `已安装: ${spec}（加载失败: ${d.loadError ?? '未知'}，重启宿主后重试）`
+      }
+
+      if (sub === 'remove') {
+        const name = String(args[1] || '').trim()
+        if (!name) return '用法: /plugin remove <插件包名>'
+        const r = await ctrl('/remove', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name }),
+        })
+        if (!r.ok) return `卸载失败: ${JSON.stringify(r.data ?? r.error)}`
+        return `已卸载: ${name}（npm 包保留，需彻底删除用 npm remove）`
+      }
+
+      if (sub === 'enable' || sub === 'disable') {
+        const name = String(args[1] || '').trim()
+        if (!name) return `用法: /plugin ${sub} <插件名>`
+        const r = await ctrl('/set-plugin', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name, enabled: sub === 'enable' }),
+        })
+        if (!r.ok) return `操作失败: ${JSON.stringify(r.data ?? r.error)}`
+        return `已${sub === 'enable' ? '启用' : '禁用'}: ${name}（重启宿主生效: bash ~/claude-code-mobile/dsh-host/start.sh restart）`
+      }
+
+      return `用法:\n`
+        + `  /plugin             看插件宿主状态（插件 + provider）\n`
+        + `  /plugin providers   看 provider 的 CCM 接入地址\n`
+        + `  /plugin bundles     看可安装的插件包\n`
+        + `  /plugin install <包名>   安装并加载插件\n`
+        + `  /plugin remove <包名>    卸载插件\n`
+        + `  /plugin enable|disable <包名>  启用/禁用（重启生效）\n`
+        + `宿主: ~/claude-code-mobile/dsh-host/ · 端口 ${HOST}`
+    },
   }
 }

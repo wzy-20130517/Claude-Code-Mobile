@@ -53,6 +53,7 @@ import { PlanMode, EnterPlanModeTool, ExitPlanModeTool, DeepMode, EnterDeepModeT
 import { PermissionManager } from './core/permissions.mjs'
 import { MCPClient } from './core/mcp-client.mjs'
 import { HashlineReadTool, HashlineEditTool, HashlineGrepTool } from './core/tools-hashline.mjs'
+import { DshPluginTool } from './core/tools-dsh-plugin.mjs'
 import { ApplyPatchTool, TestTool, DiagnosticsTool, RepoMapTool, SymbolsTool, SafeRenameTool, SleepTool } from './core/tools-smart.mjs'
 import { CronCreateTool, CronListTool, CronDeleteTool } from './core/tools-cron.mjs'
 import { startCronScheduler, missedOneShots, deleteCronTask } from './core/cron.mjs'
@@ -919,6 +920,8 @@ async function main() {
   registry.register(new HashlineReadTool())
   registry.register(new HashlineEditTool(multiUndo))
   registry.register(new HashlineGrepTool())
+  // DSH 插件宿主工具（加载/查看 DSH 生态插件）
+  registry.register(new DshPluginTool())
   registry.register(new CronCreateTool())
   registry.register(new CronListTool())
   registry.register(new CronDeleteTool())
@@ -3441,6 +3444,11 @@ async function main() {
       // 这个命令只管服务器的启停与状态查看。
       case 'mcp':
         return integrationCommands.mcp(args)
+      // ── /plugin：管理插件（对齐官方 Claude Code 的 /plugin）────────────
+      // 官方定位是 'Manage plugins'，管的是 Claude Code 插件市场里的插件。
+      // CCM 的插件体系是 DSH 生态（Cordis 插件框架），通过 dsh-host 兼容层加载。
+      case 'plugin':
+        return await integrationCommands.plugin(args)
       case 'skills':
         return miscCommands.skills(args)
 
@@ -3836,7 +3844,10 @@ async function main() {
         return sessionExtraCommands.review(args)
 
       case 'plugins':
-        return sessionExtraCommands.plugins(args)
+        // 【2026-10-04 改】原来是 cmd-extensions 的空壳插件系统（listPlugins 永远返回空）。
+        // 官方 Claude Code 把 plugins 作为 plugin 的别名（aliases: ['plugins','marketplace']），
+        // 这里对齐：/plugins 走新的 DSH 插件宿主实现。
+        return await integrationCommands.plugin(args)
 
       case 'workflow':
         return 'AgentWorkflow: Explore → Plan → Implement → Review\n每阶段独立上下文、工具白名单、maxTurns 和超时；由 Agent 工具调用，默认不后台运行。'
@@ -4345,7 +4356,7 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
 
   // 内置命令名单。skill 分发要用它判断「这个名字是不是已被内置命令占用」——
   // 内置优先，避免某个 skill 恰好叫 config/help 就把内置命令顶掉。
-  const BUILTIN_COMMANDS = ['help','agents','cost','cache','context','context7','diff','doctor','review','trace','workflow','stats','todos','goal','plan','deep','coordinate','cowork','watch','qq','undo','rewind','retry','branch','export','skills','memory','automem','permissions','bg-status','bg-list','tasks','team','exit','quit','clear','new','incognito','model','url','name','key','protocol','compact','compact-threshold','compact-trash','save','load','resume','rename','delete','copy','image','editor','add-dir','workspace','clear-restore','config','trash','keepalive','palette','web','greeting','board','keys','btw','files','status','summary','statusline','mem','font','check','plugins','x11','hooks','tools','errors','away','temperature','imagegen','mail','effort','style','me','github','voice','mcp','pexels','markdown','device','update','replay']
+  const BUILTIN_COMMANDS = ['help','agents','cost','cache','context','context7','diff','doctor','review','trace','workflow','stats','todos','goal','plan','deep','coordinate','cowork','watch','qq','undo','rewind','retry','branch','export','skills','memory','automem','permissions','bg-status','bg-list','tasks','team','exit','quit','clear','new','incognito','model','url','name','key','protocol','compact','compact-threshold','compact-trash','save','load','resume','rename','delete','copy','image','editor','add-dir','workspace','clear-restore','config','trash','keepalive','palette','web','greeting','board','keys','btw','files','status','summary','statusline','mem','font','check','plugins','x11','hooks','tools','errors','away','temperature','imagegen','mail','effort','style','me','github','voice','mcp','pexels','markdown','device','update','replay','plugin']
   const BUILTIN_COMMAND_NAMES = new Set(BUILTIN_COMMANDS)
 
   /**
