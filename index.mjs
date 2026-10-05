@@ -6949,37 +6949,34 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
         if (item === undefined) return false
         const text = String(item)
 
-        // slash 命令：不进 steering（它要的是"立即执行"，不是"给模型当上下文"），
-        // 走已有的插队执行路径 —— 但如果它不在白名单里，说明会破坏当前轮，
-        // 这时退回 steering（至少让模型下一轮看到用户想干什么）。
+        // slash 命令：**一律立即执行**（2026-10-05 按用户要求去掉白名单判断）。
+        //
+        // 【为什么不做白名单】用户原话：「如果是slash命令，任务不断，并且立即执行。」
+        // 没有「只读的才执行」这个限定。而且项目里本来就有一套白名单
+        // （主路径的 INSTANT_READONLY_COMMANDS），再维护第二套（isReadonlyCommand）
+        // 标准还不一致 —— 同一个 /config oc test 两处判定不同，纯属自找麻烦。
+        //
+        // 【风险由用户承担】Ctrl+S 是显式按键，不是自动行为。用户按了就是
+        // 「我确定现在要跑这条」，会改状态（如 /config 3 换 api 实例）的命令他自己知道。
         if (text.trim().startsWith('/')) {
           const body = text.trim().slice(1).trim()
           const [cmdName] = body.split(/\s+/)
           const name = String(cmdName || '').toLowerCase()
-          if (typeof isReadonlyCommand === 'function' && isReadonlyCommand(text)) {
-            // 白名单内 → 立刻执行（异步，不阻塞输入）
-            const cmdArgs = body.split(/\s+/).slice(1)
-            activeSlashCommand = { name, startedAt: Date.now() }
-            refreshActivityBoard()
-            Promise.resolve()
-              .then(() => handleCommand(text, body, name, cmdArgs))
-              .then((out) => { if (typeof out === 'string' && out) emit(`${C.dim}${out}${C.reset}\n`) })
-              .catch((e) => emit(`${C.yellow}命令执行失败: ${e?.message || e}${C.reset}\n`))
-              .finally(() => {
-                activeSlashCommand = null
-                refreshActivityBoard()
-                updateFsStatus()
-                if (fsSession) { try { fsSession.flushRender() } catch {} }
-              })
-            const preview0 = text.replace(/\s+/g, ' ').slice(0, 28)
-            emit(`${C.dim}[已插队执行「${preview0}${text.length > 28 ? '…' : ''}」（当前任务继续）]${C.reset}\n`)
-          } else {
-            // 白名单外 → 不能安全插队（会改 agent.messages / 换 api 实例等），
-            // 退回 steering：让模型下一轮知道用户想跑这条命令，自己决定何时停手。
-            try { agent?.pushSteering?.(`用户请求立即执行命令：${text.trim()}`) } catch {}
-            const preview0 = text.replace(/\s+/g, ' ').slice(0, 28)
-            emit(`${C.dim}[「${preview0}${text.length > 28 ? '…' : ''}」会改动当前任务，已作为补充指令注入（下一轮模型可见）]${C.reset}\n`)
-          }
+          const cmdArgs = body.split(/\s+/).slice(1)
+          activeSlashCommand = { name, startedAt: Date.now() }
+          refreshActivityBoard()
+          Promise.resolve()
+            .then(() => handleCommand(text, body, name, cmdArgs))
+            .then((out) => { if (typeof out === 'string' && out) emit(`${C.dim}${out}${C.reset}\n`) })
+            .catch((e) => emit(`${C.yellow}命令执行失败: ${e?.message || e}${C.reset}\n`))
+            .finally(() => {
+              activeSlashCommand = null
+              refreshActivityBoard()
+              updateFsStatus()
+              if (fsSession) { try { fsSession.flushRender() } catch {} }
+            })
+          const preview0 = text.replace(/\s+/g, ' ').slice(0, 28)
+          emit(`${C.dim}[已插队执行「${preview0}${text.length > 28 ? '…' : ''}」（当前任务继续）]${C.reset}\n`)
         } else {
           // 普通消息 → 注入 steering，当前工具批次不打断，下一轮模型调用前可见
           try {
