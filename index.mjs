@@ -5774,7 +5774,7 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
         }
         taskState.setQueueLength(pendingInputs.length)
         // 走 emit：全屏模式下直接写 stdout 会破坏固定布局（之前漏改的一处）
-        emit(`${C.dim}[已排队 ${pendingInputs.length} 条，Ctrl+P/N 翻看编辑，Ctrl+G 删除]${C.reset}\n`)
+        emit(`${C.dim}[已排队 ${pendingInputs.length} 条，Ctrl+P/N 翻看编辑，Ctrl+G 删除，Ctrl+S 立即发送]${C.reset}\n`)
         rl.setPrompt(queuePrompt)
         rl.lastWidth = 0
         rl.lastLine = ''
@@ -6622,7 +6622,7 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
         .map((s, i) => `  ${i + 1}. ${String(s).replace(/\s+/g, ' ').slice(0, 40)}${String(s).length > 40 ? '…' : ''}`)
         .join('\n')
       emit(`${C.yellow}[队列已挂起，${pendingInputs.length} 条待处理]${C.reset}\n${C.dim}${list}\n`
-        + `  Ctrl+P/N 翻看并编辑 · Ctrl+G 删除 · Enter 空行放行下一条${C.reset}\n`)
+        + `  Ctrl+P/N 翻看并编辑 · Ctrl+G 删除 · Ctrl+S 立即发送 · Enter 空行放行下一条${C.reset}\n`)
     }
     // 静默接续（用户不在场）的成果落盘：终端正文会被滚走，
     // 用户回来时看不到期间做了什么。写一份报告，随时能用 /away 查。

@@ -228,7 +228,7 @@ export function makeQqCommand(ctx) {
             }
             return `QQ 队列（${items.length} 条）：\n`
               + items.map((it, i) => `  ${i + 1}. ${it.message.replace(/\s+/g, ' ').slice(0, 46)}${it.hasImages ? ' [图片]' : ''}`).join('\n')
-              + `\n\n删除: /qq queue <序号> · 清空: /qq queue clear\n终端里也可用 Ctrl+P/N 翻看、Ctrl+G 删除`
+              + `\n\n删除: /qq queue <序号> · 清空: /qq queue clear\n终端里也可用 Ctrl+P/N 翻看、Ctrl+G 删除、Ctrl+S 立即发送`
           }
           case 'port': {
             if (!args[1]) return `当前监听端口: ${_ctx.qqBridge.port}\n用法: /qq port <1-65535>`
