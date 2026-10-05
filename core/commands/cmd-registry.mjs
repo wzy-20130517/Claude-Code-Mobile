@@ -24,6 +24,7 @@
 // 模块内部照常调用 —— 注册表不关心这些细节。
 
 import { makeQueryCommands, makeSessionCommands } from './cmd-queries.mjs'
+import { makeSystemConfigCommands } from './cmd-system-config.mjs'
 import { makeSmallConfigCommands } from './cmd-small-config.mjs'
 import { makeIntegrationCommands } from './cmd-integrations.mjs'
 import { makeTeamTaskCommands } from './cmd-team-task.mjs'
@@ -178,6 +179,10 @@ export function buildCommandTable(ctx, options = {}) {
   // 顺序有意义：先注册的优先，重名的后来者被跳过并记进 skipped。
   merge('cmd-queries', () => makeQueryCommands(ctx))
   merge('cmd-session', () => makeSessionCommands(ctx))
+  // 【2026-10-05 加】系统配置批（/cache /compact-threshold /workspace /me /check /context7）。
+  // 这些原来只写在 index.mjs 的 handleCommand 里，Web 拿不到 —— 用户指出
+  // 「web 端其实有点落后了」后拆出来两端共用。
+  merge('cmd-system-config', () => makeSystemConfigCommands(ctx))
   merge('cmd-small-config', () => makeSmallConfigCommands(ctx))
   merge('cmd-integrations', () => makeIntegrationCommands(ctx))
   merge('cmd-team-task', () => makeTeamTaskCommands(ctx))

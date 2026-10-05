@@ -45,6 +45,10 @@ import skillsImg from '../assets/icons/skills.png';
 import connectorsImg from '../assets/icons/connectors.png';
 import customizeMainImg from '../assets/icons/customize-main.png';
 import createSkillsImg from '../assets/icons/create-skills.png';
+// 【2026-10-05】插件 tab 图标（复用 Figma 导出的 nav-plugins，与侧栏风格一致）
+import pluginsImg from '../assets/customize/directory/nav-plugins.svg';
+// 【2026-10-05】插件面板组件（对齐 CLI 的 /plugin）
+import PluginPanel from './customize/PluginPanel';
 
 interface Skill {
   id: string;
@@ -230,7 +234,7 @@ const FileTreeNode: React.FC<FileTreeNodeProps> = ({
 
 const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void }) => {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'overview' | 'skills' | 'connectors'>('overview');
+  const [tab, setTab] = useState<'overview' | 'skills' | 'connectors' | 'plugins'>('overview');
   const [examples, set示例] = useState<Skill[]>([]);
   const [mySkills, setMySkills] = useState<Skill[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
@@ -783,6 +787,13 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
             <img src={connectorsImg} alt="" className="w-[22px] h-[22px] dark:invert" />
             连接器
           </button>
+          {/* 【2026-10-05 新增】插件 tab —— 对齐 CLI 的 /plugin（DSH 插件宿主）。
+              用户指出「web 端其实有点落后了」：CLI 10-04 接入 DSH 后 Web 端零入口。 */}
+          <button onClick={() => setTab('plugins')}
+            className={`w-full flex items-center gap-3 px-3 py-2 text-[15px] font-medium rounded-lg transition-colors ${tab === 'plugins' ? 'bg-claude-hover text-claude-text' : 'text-claude-text hover:bg-claude-hover'}`}>
+            <img src={pluginsImg} alt="" className="w-[22px] h-[22px] dark:invert" />
+            插件
+          </button>
         </nav>
       </div>
 
@@ -1005,6 +1016,10 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
               onUninstallConnector={handleUninstallConnector}
             />
           </div>
+        ) : tab === 'plugins' ? (
+          // 【2026-10-05 新增】插件面板 —— 对齐 CLI 的 /plugin（DSH 插件宿主）。
+          // 中列此时为 null（插件面板自带完整列表+操作，不需要左右分栏）。
+          <PluginPanel />
         ) : creating ? (
           // Create Form
           <div className="max-w-3xl mx-auto w-full p-8 space-y-6 overflow-y-auto">

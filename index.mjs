@@ -6,6 +6,14 @@ import { FullscreenSession } from './core/ui/fullscreen-adapter.mjs'
 import { wrapToWidth } from './core/ui/fullscreen.mjs'
 import { runWizard, withNonInteractive, isNonInteractive } from './core/commands/wizard.mjs'
 import { buildCommandTable } from './core/commands/cmd-registry.mjs'
+// 【2026-10-05】命令目录（名 + 描述 + 参数提示）改从 catalog 取，
+// 与 Web 端同一份真值源。原来 CLI 手写两份、Web 手写第三份，必然漂移。
+import {
+  BUILTIN_COMMANDS as CATALOG_BUILTIN_COMMANDS,
+  BUILTIN_COMMAND_NAMES as CATALOG_BUILTIN_COMMAND_NAMES,
+  COMMAND_DESCRIPTIONS as CATALOG_DESCRIPTIONS,
+  ARG_HINTS as CATALOG_ARG_HINTS,
+} from './core/commands/command-catalog.mjs'
 import { providerAddSteps, applyProviderAdd } from './core/commands/wizard-steps.mjs'
 import { makeMarkdownCommand } from './core/commands/cmd-markdown.mjs'
 import { makeUpdateCommand } from './core/commands/cmd-update.mjs'
@@ -76,6 +84,9 @@ import { makeCompactCommand } from './core/commands/cmd-compact.mjs'
 import { makeMemCommand } from './core/commands/cmd-mem.mjs'
 import { makeQqCommand } from './core/commands/cmd-qq.mjs'
 import { makeSmallConfigCommands } from './core/commands/cmd-small-config.mjs'
+// 【2026-10-05】系统配置命令（/cache /compact-threshold /workspace /me /check /context7）
+// —— 拆出 core 模块，两端共用（原来只在下面 switch 手写，Web 拿不到）。
+import { makeSystemConfigCommands } from './core/commands/cmd-system-config.mjs'
 import { webCommand } from './core/commands/cmd-web.mjs'
 import { makeMiscCommands } from './core/commands/cmd-misc.mjs'
 import { makeSideCommands } from './core/commands/cmd-side.mjs'
@@ -2897,6 +2908,26 @@ async function main() {
     fsSession: () => fsSession,
   })
 
+  // /cache /compact-threshold /workspace /me /check /context7 —— 系统配置命令
+  // 【2026-10-05 加】这些原来散在下面 switch 里手写，Web 拿不到（用户指出
+  // 「web 端其实有点落后了」）。现在拆进 core/commands/cmd-system-config.mjs，
+  // CLI 与 Web 共用同一份实现（Web 侧走注册表自动收录）。
+  const systemConfigCommands = makeSystemConfigCommands({
+    C,
+    config,
+    saveConfig,
+    syncActiveProvider,
+    syncSessionCacheKey,
+    getWorkspacePath,
+    setWorkspacePath,
+    // 工作区/资料改了 → 系统提示词要重算，否则模型看不到新值
+    onWorkspaceChanged: () => { agent.systemPrompt = getCurrentSystemPrompt() },
+    onProfileChanged: () => { try { invalidateSystemPromptSection('base') } catch {} },
+    isIncognito: () => incognitoMode,
+    cwd: () => process.cwd(),
+    mcpPath: MCP_PATH,
+  })
+
   // /keepalive /compact-trash /skills /font /context —— 杂项命令
   const miscCommands = makeMiscCommands({
     C,
@@ -3302,44 +3333,10 @@ async function main() {
       case 'cost':
         return queryCommands.cost()
 
-      case 'cache': {
-        const prov = config.providers?.[config.current]
-        if (!prov) return '当前 Provider 不存在'
-        const sub = String(args[0] || 'show').toLowerCase()
-        if (sub === 'show' || sub === 'status') {
-          return `Prompt Cache（Provider ${config.current}）:\n  扩展字段: ${prov.promptCacheEnabled === true ? '开启' : '关闭'}\n  保留时间: ${prov.promptCacheRetention === '24h' ? '24h' : '默认'}\n  缓存键: ${api?.promptCacheEnabled === true ? (api.sessionCacheKey || '当前会话') : '未发送'}\n用法:\n  /cache on|off\n  /cache retention 24h|off`
-        }
-        if (sub === 'on' || sub === 'enable') {
-          prov.promptCacheEnabled = true
-          saveConfig(config)
-          syncActiveProvider(config, api, prov)
-          syncSessionCacheKey()
-          return `Provider ${config.current} Prompt Cache 扩展字段已开启`
-        }
-        if (sub === 'off' || sub === 'disable') {
-          prov.promptCacheEnabled = false
-          delete prov.promptCacheRetention
-          saveConfig(config)
-          syncActiveProvider(config, api, prov)
-          syncSessionCacheKey()
-          return `Provider ${config.current} Prompt Cache 扩展字段已关闭`
-        }
-        if (sub === 'retention') {
-          const value = String(args[1] || '').toLowerCase()
-          if (value === '24h') {
-            prov.promptCacheEnabled = true
-            prov.promptCacheRetention = '24h'
-          } else if (value === 'off' || value === 'default' || value === '0') {
-            delete prov.promptCacheRetention
-          } else {
-            return '用法: /cache retention 24h|off'
-          }
-          saveConfig(config)
-          syncActiveProvider(config, api, prov)
-          return `Provider ${config.current} Prompt Cache 保留时间: ${prov.promptCacheRetention || '默认'}`
-        }
-        return '用法: /cache show|on|off|retention 24h|off'
-      }
+      case 'cache':
+        // 【2026-10-05 搬】实现移到 core/commands/cmd-system-config.mjs，
+        // 两端共用（Web 走注册表自动收录）。
+        return systemConfigCommands.cache(args)
 
       case 'compact':
         // 全清提示词段缓存（对齐官方：/compact 时 clearSystemPromptSections）
@@ -3347,22 +3344,9 @@ async function main() {
         return await compactCommand.compact(args)
 
 
-      case 'compact-threshold': {
-        if (args[0] === undefined && args[1] === undefined) {
-          const tokenStr = getTokenLimit() > 0 ? getTokenLimit() : '关闭(0)'
-          const msgStr = getMessageLimit() > 0 ? getMessageLimit() : '关闭(0)'
-          const policy = getCachePolicy()
-          return `当前自动压缩:\n  固定 Token 阈值: ${tokenStr}\n  固定消息阈值: ${msgStr}\n  自动压缩总开关: ${isAutoCompactEnabled() ? '开启' : '关闭'}\n\n说明:\n  · 默认关闭自动摘要，对话中不会主动压缩\n  · /compact status           仅查看建议，不执行\n  · /compact / /compact force 手动压缩\n  · /compact-threshold 0 0    完全关闭自动压缩\n  · /compact-threshold <t> <m> 设固定阈值并按阈值自动压缩\n  · 上下文真正超长时由 agent 紧急截断保护（非摘要）`
-        }
-        const newTokens = parseInt(args[0])
-        const newMessages = parseInt(args[1])
-        let msg = ''
-        if (!isNaN(newTokens) && setTokenLimit(newTokens)) msg += `Token 上限已设为: ${newTokens === 0 ? '关闭' : newTokens}\n`
-        if (!isNaN(newMessages) && setMessageLimit(newMessages)) msg += `消息条数上限已设为: ${newMessages === 0 ? '关闭' : newMessages}\n`
-        if (isAutoCompactEnabled()) msg += `自动压缩: 开启（按固定阈值）`
-        else msg += `自动压缩: 已完全关闭（仅手动 /compact）`
-        return msg || '参数无效。用法: /compact-threshold <tokens> <messages>'
-      }
+      case 'compact-threshold':
+        // 【2026-10-05 搬】实现移到 core/commands/cmd-system-config.mjs。
+        return systemConfigCommands['compact-threshold'](args)
 
       case 'compact-trash':
         return miscCommands['compact-trash'](args)
@@ -3806,59 +3790,11 @@ async function main() {
       //   /style  → 影响**怎么说话**（输出风格，可换可自定义）
       //   /profile → 影响**对你说话**（称呼、职业、个人偏好）
       // 两者都注入系统提示词，但语义不同，所以不合并成一个命令。
-      case 'me': {
-        // 用户资料改了 → 提示词里的那段要重算
-        try { invalidateSystemPromptSection('base') } catch {}
-        const sub = String(args[0] || '').trim()
-        if (!sub) {
-          const p = loadUserProfile()
-          const lines = []
-          const labels = {
-            display_name: '称呼', full_name: '全名',
-            work_function: '职业', personal_preferences: '回复偏好',
-          }
-          for (const f of PROFILE_FIELDS) {
-            lines.push(`  ${f.padEnd(22)} ${p[f] ? p[f] : C.dim + '(未设置)' + C.reset}`)
-          }
-          return `用户资料（注入系统提示词；改了下一轮生效）\n${lines.join('\n')}\n\n`
-            + `用法: /me set <字段> <值>\n`
-            + `      /me clear <字段>\n`
-            + `      /me clear-all\n`
-            + `文件: ${getUserProfilePath()}`
-        }
-        if (sub === 'set') {
-          const field = String(args[1] || '').trim()
-          const value = args.slice(2).join(' ').trim()
-          if (!field || !value) {
-            return `用法: /me set <字段> <值>\n字段: ${PROFILE_FIELDS.join(' / ')}\n`
-              + `例: /me set display_name 小杰`
-          }
-          const r = setProfileField(field, value)
-          if (!r.ok) return r.error
-          return `已设置 ${field}: ${value}\n（下一轮对话生效）`
-        }
-        if (sub === 'clear') {
-          const field = String(args[1] || '').trim()
-          if (!field) return `用法: /me clear <字段>\n字段: ${PROFILE_FIELDS.join(' / ')}`
-          const r = setProfileField(field, '')
-          if (!r.ok) return r.error
-          return `已清除 ${field}`
-        }
-        if (sub === 'clear-all') {
-          for (const f of PROFILE_FIELDS) setProfileField(f, '')
-          return '已清空全部用户资料'
-        }
-        return `不认识的子命令: ${sub}\n用法: /me [set <字段> <值> | clear <字段> | clear-all]`
-      }
+      case 'me':
+        // 【2026-10-05 搬】实现移到 core/commands/cmd-system-config.mjs
+        // （提示词段失效由模块的 onProfileChanged 回调处理）。
+        return systemConfigCommands.me(args)
 
-      // 输出风格（对齐官方 outputStyle，见 core/output-styles.mjs）
-      //
-      // 【为什么叫 /style 而不是官方的 /output-style】
-      //   官方把它做成 /output-style 又标成 Deprecated + isHidden，改由 /config 统一管
-      //   （他们的 /config 是设置总入口：theme/model/language/outputStyle 都在里面）。
-      //   我们的 /config 是 **Provider 配置管理器**（url/key/model/协议），
-      //   把"回复风格"塞进去语义不对，所以保留独立命令。
-      //   名字取 /style：手机上少敲 7 个字符，且不与 /statusline 混淆。
       case 'style':
         // 输出风格变了 → base 段（含 {{OUTPUT_STYLE}} 替换）要重算
         try { invalidateSystemPromptSection('base') } catch {}
@@ -3886,15 +3822,9 @@ async function main() {
         return miscCommands.font(args)
 
 
-      case 'check': {
-        if (incognitoMode) return 'Incognito 会话禁用 /check'
-        const result = await runRestartPreflight(process.cwd())
-        return result.ok
-          ? (result.cached
-            ? `重启预检通过（未改动）：文件集与内容哈希自上次预检后无变化，直接放行（${result.skipped} 个 .mjs）`
-            : `重启预检通过：${result.checked} 个 .mjs 文件${result.skipped ? `（跳过 ${result.skipped} 个未修改）` : ''}`)
-          : formatRestartPreflightFailure(result).replace(/^重启已拦截：/, '')
-      }
+      case 'check':
+        // 【2026-10-05 搬】实现移到 core/commands/cmd-system-config.mjs。
+        return await systemConfigCommands.check(args)
 
       case 'review':
         return sessionExtraCommands.review(args)
@@ -3908,16 +3838,9 @@ async function main() {
       case 'workflow':
         return 'AgentWorkflow: Explore → Plan → Implement → Review\n每阶段独立上下文、工具白名单、maxTurns 和超时；由 Agent 工具调用，默认不后台运行。'
 
-      case 'context7': {
-        if (incognitoMode) return 'Incognito 会话禁用 /context7'
-        const sub = String(args[0] || 'status').toLowerCase()
-        if (sub === 'help') return context7Help()
-        if (sub === 'setup') return `Context7 配置完成：${JSON.stringify(setupContext7(MCP_PATH))}\n默认仍禁用；用 /context7 enable 后重启加载。`
-        if (sub === 'enable' || sub === 'on') return `Context7 已启用：${JSON.stringify(setContext7Enabled(true, MCP_PATH))}\n请重启后加载 MCP。`
-        if (sub === 'disable' || sub === 'off') return `Context7 已禁用：${JSON.stringify(setContext7Enabled(false, MCP_PATH))}\n请重启后卸载 MCP。`
-        if (sub === 'status') return JSON.stringify(context7Status(MCP_PATH), null, 2)
-        return context7Help()
-      }
+      case 'context7':
+        // 【2026-10-05 搬】实现移到 core/commands/cmd-system-config.mjs。
+        return systemConfigCommands.context7(args)
 
       case 'trace':
         return queryCommands.trace(args)
@@ -4237,17 +4160,9 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
       case 'add-dir':
         return sessionExtraCommands['add-dir'](args)
 
-      case 'workspace': {
-        // /workspace [路径] — 查看/设置工作区（持久化到 config.json）
-        if (!args[0] || args[0] === 'show') {
-          const wp = getWorkspacePath()
-          return `当前工作区: ${wp}\n用法: /workspace /sdcard/Download/my-project\n（改完立即生效，系统提示词会同步更新）`
-        }
-        const r = setWorkspacePath(args[0])
-        if (!r.ok) return `设置失败: ${r.error}`
-        agent.systemPrompt = getCurrentSystemPrompt()
-        return `工作区已设为: ${r.path}`
-      }
+      case 'workspace':
+        // 【2026-10-05 搬】实现移到 core/commands/cmd-system-config.mjs。
+        return systemConfigCommands.workspace(args)
 
       case 'greeting':
         return queryCommands.greeting(args)
@@ -4420,8 +4335,12 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
 
   // 内置命令名单。skill 分发要用它判断「这个名字是不是已被内置命令占用」——
   // 内置优先，避免某个 skill 恰好叫 config/help 就把内置命令顶掉。
-  const BUILTIN_COMMANDS = ['help','agents','cost','cache','context','context7','diff','doctor','review','trace','workflow','stats','todos','goal','plan','deep','coordinate','cowork','watch','qq','undo','rewind','retry','branch','export','skills','memory','automem','permissions','bg-status','bg-list','tasks','team','exit','quit','clear','new','incognito','model','url','name','key','protocol','compact','compact-threshold','compact-trash','save','load','resume','rename','delete','copy','image','editor','add-dir','workspace','clear-restore','config','trash','keepalive','palette','web','greeting','board','keys','btw','files','status','summary','statusline','mem','font','check','plugins','x11','hooks','tools','errors','away','temperature','imagegen','mail','effort','style','me','github','voice','mcp','pexels','markdown','device','update','replay','plugin']
-  const BUILTIN_COMMAND_NAMES = new Set(BUILTIN_COMMANDS)
+  //
+  // 【2026-10-05】改为从 core/commands/command-catalog.mjs 取（单一真值源）。
+  // 原来这里是手写数组、描述表在 5004 行是另一份、Web 的列表又是第三份 ——
+  // 加一个命令要改三处，必然漂移（实际已经漂移：Web 落后 CLI 25 个命令）。
+  const BUILTIN_COMMANDS = CATALOG_BUILTIN_COMMANDS
+  const BUILTIN_COMMAND_NAMES = CATALOG_BUILTIN_COMMAND_NAMES
 
   /**
    * 隐藏命令：功能完整保留、能正常执行、Ctrl+I 补全也认，
@@ -5001,139 +4920,12 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
   }
   // 实时补全面板：打 /c 那一刻就列出 /compact /context /clear…，不用按 Tab
   // 描述表提出来命名：/palette 命令面板复用同一份（避免两份漂移）
-  const commandDescriptions = {
-    help: '帮助（输 /help 空格看各主题）',
-    mcp: 'MCP 服务器：list/status/enable/disable/tools',
-    pexels: '图库搜索 key（FindImage 用）：set/test/clear',
-    cost: 'token 用量与花费',
-    cache: 'Prompt Cache 开关：/cache on|off|retention 24h',
-    context: '上下文占用与上限',
-    context7: 'Context7 文档查询：空格看子命令',
-    diff: '看 git 改动：空格看子命令',
-    doctor: '环境自检',
-    review: '工作区审查',
-    trace: '执行轨迹查看/回放',
-    workflow: '阶段化工作流说明',
-    stats: '使用统计',
-    todos: '待办列表',
-    plan: '计划模式开关',
-    deep: `深模式（maxTurns ${DEEP_MAX_TURNS}）`,
-    watch: '持续模式：/watch on|off',
-    goal: '完成契约：自动跨轮推进直到达成',
-    // 下面这批描述原来把子命令又列了一遍（argHint 里一遍、subcommands 表里还有一遍）。
-    // 三份重复的结果是：窗屏 40 列下面板行不折行，句尾直接被截，而句尾往往才是关键信息。
-    // 现在描述只回答「这命令干什么」，子命令交给 subcommands 面板（一个一行、各带说明，不会被截）。
-    qq: 'QQ 私聊桥：空格看子命令',
-    undo: '撤销文件修改',
-    rewind: '检查点回退',
-    retry: '回到报错前重跑',
-    branch: '从当前对话拉分支',
-    export: '导出对话（md/html/json）',
-    skills: '技能列表/搜索',
-    memory: 'CLAUDE.md 项目记忆',
-    automem: '自动记忆：/automem on|off',
-    permissions: '工具权限与模式',
-    'bg-status': '后台任务：/bg-status <id>',
-    'bg-list': '后台任务列表',
-    exit: '退出程序',
-    quit: '退出程序',
-    clear: '清空当前对话记录',
-    new: '存当前 + 开新对话',
-    incognito: '隔离会话（不写盘）',
-    model: '换模型（id 省略 = 当前 Provider）',
-    url: '改 API 地址（如 …/v1）',
-    // 同样保持一行短句（窄屏）：四个子命令的说明交给 subcommands 表
-    key: '看/改密钥：无参看现状含冷却',
-    compact: '压缩上下文（直接敲=自动选）',
-    'compact-threshold': '自动压缩阈值（默认关）',
-    'compact-trash': '找回压缩前的完整上下文',
-    save: '手动存会话',
-    load: '列出所有会话',
-    resume: '恢复会话（ID 或名称；省略 = 最近一个）',
-    rename: '给当前对话起名',
-    delete: '删除会话',
-    copy: '复制最后回复',
-    image: '识图：/image <路径> [说明]',
-    editor: '长消息编辑：/editor 打开外部编辑器',
-    'add-dir': '加工作目录：/add-dir /路径',
-    workspace: '查看/设置工作区：/workspace [路径]',
-    'clear-restore': '找回被 /clear 清掉的对话',
-    config: '切 Provider：留空进选择列表',
-    trash: '文件回收站：无参看列表',
-    keepalive: '息屏保活',
-    // 描述只回答「这命令干什么」，不重列子命令 —— 那是 subcommands 面板的活
-    // （敲「/voice 」空格展开，一个一行各带说明，不会被窄屏截断）。
-    voice: '把我的正文念出来（工具调用不念）',
-    web: 'Web 服务：/web start|status|open',
-    greeting: '开场白：/greeting on|off',
-    board: '看板显示开关',
-    keys: '快捷键速查',
-    btw: '顺带问一句（不占上下文）',
-    files: '上下文文件：/files 或 /files reset 清',
-    status: '一屏汇总状态',
-    summary: '生成对话摘要标题',
-    statusline: '自定义底部状态行',
-    mem: '结构化记忆：/mem list|find <关键词>|save|rm',
-    // 实现只有「看」和「reset」，没有换字体。原描述写「切换终端字体」是承诺了做不到的事。
-    font: '看当前字体；/font reset 恢复默认',
-    check: '重启预检（语法/声明）',
-    plugins: '已加载插件',
-    x11: '浏览器 X11：/x11 on|off|status',
-    hooks: '已配置 hooks',
-    tools: '已注册工具清单',
-    errors: '近期错误记录',
-    away: '离场成果报告',
-    temperature: '生成温度设置',
-    imagegen: '生图配置：配完直接说「画一张…」',
-    // 下面 5 条补于 2026-08-28：它们在 slashCommands 里但没写描述，命令面板里显空白
-    name: '改显示名（改编号用 /config provider）',
-    effort: '思考强度（每 Provider 独立）',
-    style: '输出风格（回复方式；可自定义 .claude/output-styles/）',
-    me: '用户资料（称呼/职业/偏好；注入提示词）',
-    github: 'GitHub 工具集（仓库/issue/PR 读写）',
-    tasks: '持久待办（跟轮内 todo 不是一回事）',
-    // 描述保持一行短句：子命令细节由上面的 subcommands 表提供（敲空格展开），
-    // 挤在这里反而在窄屏上被截断、什么都看不清。
-    agents: '子 Agent：谁在跑、卡住了吗',
-    team: '多 Agent 协作全景（团队名=任务列表名）',
-    mail: '邮箱接码 MCP：空格看子命令',
-    device: '手机 Shell 通道 / 虚拟副屏 / 操作模式',
-  }
-  fsSession.setCommands(slashCommands, commandDescriptions, rl.completers.subcommands, {
-    // 参数格式提示，对齐官方 argumentHint（如官方 /add-dir 是 '<path>'）。
-    // 只给真正需要参数的命令写，纯开关类命令留空更干净。
-    'add-dir': '<路径>', workspace: '[路径]', resume: '[ID|名称]', delete: '<ID|all>',
-    rename: '<名称>', branch: '<名称>', save: '[名称]', compact: '[N|micro|force|status]',
-    'compact-threshold': '[数字|0 0]', model: '[配置ID] <模型名>', url: '[配置ID] <地址>',
-    key: '[ID] <sk-...|pool|clear>', name: '[配置ID] <显示名>',
-    // 【为何要控宽】面板行不折行，而且当 "/cmd argHint" 这个头部就已超屏宽时，
-    // 渲染逻辑会把描述**整条丢掉**（fullscreen-adapter 里的 visibleLen > cols 分支）。
-    // 所以 argHint 写长不是「多给了点信息」，是「把描述挤掉了」——净信息量反而下降。
-    // 「留空进选择列表」这类说明搬到描述里，这里只留参数形状。
-    config: '[ID|list|provider|…]', effort: '[强度|off|show|hide|replay]', style: '[风格名|off]',
-    me: '[set <字段> <值>|clear <字段>]',
-    github: '[login|repo|test|logout]',
-    permissions: '[mode|allow|deny <名>]', font: '[reset]',
-    // 原来写 '[compact|standard|detailed|off]'，这四个子命令**实现里一个都不认**（只认
-    // show|set|test|off，见 case 'statusline'）。照着提示敲会得到「不认识的子命令」——
-    // 错提示比没提示更伤。改 argHint 的时候必须回到实现里逐个核对。
-    statusline: '[show|set <命令>|test|off]',
-    trash: '[restore <序号>|clear]',
-    voice: '[on|off|<音色>|rate <+10%>]',
-    qq: '[on|off|setup|…]', mail: '[status|set|…]',
-    imagegen: '[setup|url|key|…]', memory: '[init|append <内容>]',
-    image: '<图片路径> [说明]', watch: '[on|off]', greeting: '[on|off]',
-    // 9 个子命令用 | 挤一行，在 40-60 列窄屏上会被直接截断 —— 尾部的
-    // proof / bound / budget 用户根本看不到，而它们正是 /goal 与普通待办的区别
-    // （四要素契约：目标/判据/边界/预算）。细节交给下面的 subcommands 面板，
-    // 那里一个子命令一行、各带说明。
-    goal: '[目标描述|子命令]',
-    // 注：slashCommands 里只有 /skills（复数），没有 /skill，别再给 skill 写 hint
-    'bg-status': '<任务ID>', skills: '[技能名]', team: '[名称]', tasks: '[列表名]',
-    agents: '[cards|reload|new]',
-    help: '[主题]', copy: '', undo: '', rewind: '',
-    device: '[mode 主屏|副屏|选择|shell|vd|test]',
-  })
+  // 【2026-10-05】改为从 core/commands/command-catalog.mjs 取（单一真值源）。
+  // 原来这里是手写 97 行、Web 的列表是另一份 —— 加命令要改多处，必然漂移。
+  const commandDescriptions = CATALOG_DESCRIPTIONS
+  // 【2026-10-05】参数提示也移到 catalog（ARG_HINTS）。
+  // 与描述同理：这些是数据不是逻辑，两端共用一份，避免漂移。
+  fsSession.setCommands(slashCommands, commandDescriptions, rl.completers.subcommands, CATALOG_ARG_HINTS)
   fsSession.start()
   // ── 重启后的历史回放（2026-10-03）──
   // 对齐官方 REPL.tsx:1182（恢复的历史直接渲染上屏）：

@@ -16,13 +16,21 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 import { atomicWrite } from '../core/infra/atomic.mjs'
+// 【2026-10-05 修】原来这里写死 `join(PROJECT_ROOT, 'config.json')` ——
+// 2026-10-03「源码与用户数据分离」后配置已搬到 ~/.claude-code-mobile/config.json，
+// 项目根那份是旧副本（或压根不存在）。
+// 症状：Web 端任何走 buildWebCtx 的命令都报「config.json 读取失败: ENOENT」，
+// 因为 CLI_CONFIG_PATH 指向一个不存在的文件。
+// 现在统一用 paths.mjs 的 resolveConfigPath（它按「数据目录 → 项目根」顺序找）。
+import { resolveConfigPath, WEB_CONFIG_PATH as DATA_WEB_CONFIG_PATH } from '../core/infra/paths.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = join(__dirname, '..')
-const CLI_CONFIG_PATH = join(PROJECT_ROOT, 'config.json')
+const CLI_CONFIG_PATH = resolveConfigPath('config.json')
 
 /** Web 专属配置（current + 设置），与 CLI 的 current 隔离。 */
 export const WEB_CONFIG_PATH = process.env.CLAUDE_WEB_CONFIG
+  || DATA_WEB_CONFIG_PATH
   || join(homedir(), '.claude-code-mobile', 'web-config.json')
 
 /**

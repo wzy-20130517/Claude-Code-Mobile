@@ -39,6 +39,9 @@ import { extractAtRefs, buildAtContext } from '../core/infra/at-refs.mjs'
 import { setVisionConfig } from '../core/phone/ocr.mjs'
 import { WEB_SYSTEM_PROMPT, WEB_SESSION_START_PROMPT } from './prompts.mjs'
 import { buildCommandTable } from '../core/commands/cmd-registry.mjs'
+// 【2026-10-05】命令列表改从 catalog 取（与 CLI 同一份真值源）——
+// 原来用本文件硬编码的 48 条静态列表，与 CLI 的 94 条严重脱节。
+import { listCommandEntries } from '../core/commands/command-catalog.mjs'
 import { buildWebCtx, runWebCommand, WizardRequired, SelectRequired } from './command-adapter.mjs'
 import { ProjectStore } from './projects.mjs'
 import { getTavilyKey } from '../core/tools/tavily.mjs'
@@ -123,25 +126,25 @@ let sharedMcpTools = []
 const mcpReady = mcpClient.loadConfig(MCP_CONFIG_PATH)
   .then(() => { sharedMcpTools = mcpClient.createToolAdapters() })
   .catch(error => console.error('[web] MCP load failed:', error?.message || error))
-// Web 只保留“UI 不方便表达”的命令：会话增删改名、清空、thinking 档位都由界面按钮操作。
-const BUILTIN_SLASH_COMMANDS = [
-  ['help', '查看 Web 命令帮助'], ['tools', '列出当前可用工具'], ['skills', '列出可用 Skills'],
-  ['mcp', '查看 MCP 服务器和工具状态'], ['status', '查看当前 Web/Provider 状态'],
-  ['config', '查看/切换 Provider，管理 key、provider 增删、识图路由'], ['model', '查看或切换模型（/model [id] <名>，id 省略=当前）'], ['compact', '压缩当前会话上下文'],
-  ['cost', '查看当前会话 token 使用量'],
-  ['permissions', '查看 Web 权限策略'], ['context', '查看当前会话上下文状态'], ['memory', '查看或保存 Web 专属记忆'],
-  ['url', '查看或切换 URL（/url [id] <地址>）'], ['name', '改 Provider 显示名（/name [id] <显示名>，省略值=查看；只改名字不动编号）'], ['key', '查看或切换 API Key（/key [id] <密钥>）'],
-  ['imagegen', '生图配置：/imagegen url|key|model|size|dir|clear；配好后直接说「画一张…」'], ['keepalive', '查看 Termux 保活状态'],
-  ['undo', '撤销最近一次文件改动'], ['trash', '查看/恢复/清空回收站'], ['hooks', '查看已配置的 hooks'],
-  ['protocol', '查看/切换 Provider 的 API 协议（openai|anthropic|responses）'],
-  ['deep', '深度模式：长任务多轮执行（/deep [on|off]）'], ['plan', '计划模式：先出方案再执行（/plan [on|off]）'],
-  ['goal', '目标契约：设目标/判据/边界/预算，自动跨轮推进'], ['todos', '查看当前待办'], ['tasks', '查看持久任务列表'],
-  ['team', '查看协作团队状态'], ['effort', '查看/切换思考强度'], ['errors', '查看最近错误'],
-  ['diff', '查看 git 改动'], ['doctor', '运行自检'], ['stats', '查看使用统计'],
-  ['trace', '执行轨迹'], ['summary', '会话摘要'], ['export', '导出对话'],
-  ['compact-trash', '压缩回收站'], ['compact-threshold', '压缩阈值'], ['watch', '持续模式'],
-  ['incognito', '隐私模式'], ['retry', '重试上一条'], ['image', '查看图片'], ['files', '文件列表'],
-  ['pexels', '图库 key 配置'], ['temperature', '查看/设置温度'], ['qq', 'QQ 桥开关'], ['mail', '邮件账号'], ['voice', '语音输入状态'],
+// 命令列表 —— 【2026-10-05 改为从 catalog 动态取】
+//
+// 【为什么改】
+// 用户指出「web 端其实有点落后了」。排查发现这里是**硬编码的 48 条静态列表**，
+// 而 CLI 侧命令早已 94 个（且注册表是动态的）—— 结果 25 个命令
+// （/plugin /mem /new /resume /style /update /device …）在 Web 上
+// 「敲了能跑、但补全面板里不显示」，用户根本不知道它们存在。
+//
+// 同时这里曾经手写的描述（如「查看 Web 命令帮助」）与 CLI 侧
+// commandDescriptions 各说各话，同一条命令两端描述不一致。
+//
+// 现在改为复用 core/commands/command-catalog.mjs 的单一真值源：
+//   · 描述自动与 CLI 一致（同一份 COMMAND_DESCRIPTIONS）
+//   · 加新命令只需改 catalog 一处，Web 自动跟上
+//
+// 【保留的 Web 特有项】
+// WEB_ONLY_COMMANDS 是「CLI 没有、只有 Web 有」的命令（当前只有 /restart：
+// Web 的重载说明）。它们不进 catalog（catalog 是两端共用的内置命令表）。
+const WEB_ONLY_COMMANDS = [
   ['restart', '说明如何重载 Web 服务（Web 不重启 CLI）'],
 ]
 const WORKSPACE_ROOTS = [...new Set([homedir(), '/sdcard'].flatMap(path => {
@@ -1166,7 +1169,12 @@ const WEB_SUBCOMMANDS = {
 function getSlashCommands(runtime) {
   ensureRuntimeExtensions(runtime)
   const custom = runtime?.commandLoader?.list?.() || []
-  return [...BUILTIN_SLASH_COMMANDS.map(([name, description]) => ({ name, description, builtin: true })), ...custom.map(c => ({ ...c, builtin: false }))]
+  // 内置命令来自 catalog（与 CLI 同一份真值源），Web 特有命令追加在后面。
+  // 【2026-10-05】原来这里用本文件硬编码的 BUILTIN_SLASH_COMMANDS（48 条），
+  // 与 CLI 的 94 条严重脱节 —— 详见文件顶部 WEB_ONLY_COMMANDS 的注释。
+  const builtin = listCommandEntries()
+  const webOnly = WEB_ONLY_COMMANDS.map(([name, description]) => ({ name, description, builtin: true }))
+  return [...builtin, ...webOnly, ...custom.map(c => ({ ...c, builtin: false }))]
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 function getSkillEntries(runtime) {
@@ -1308,8 +1316,10 @@ function formatCommandResult(name, runtime, args = []) {
   // ── /protocol：切换 Provider 的 API 协议 ──────────────────────────────
   //
   // 【2026-09-19 补】Web 原来**完全没有**切协议的入口：/protocol 不在
-  // BUILTIN_SLASH_COMMANDS 里，而 /config protocol 已被 CLI 明确废弃
+  // 当时的静态命令列表里，而 /config protocol 已被 CLI 明确废弃
   //（core/cmd-extensions.mjs:898 只回一句「已移除」）—— 形成死角。
+  // 【2026-10-05】命令列表已改为从 catalog 动态取，/protocol 现在
+  // 天然出现在补全面板里，死角不复存在（本分支保留作为 Web 侧实现）。
   // 协议选错会导致端点路径拼错（anthropic 不带 /v1，openai/responses 要带），
   // 表现为 404，用户很难自己查出来。
   if (name === 'protocol') {
@@ -1601,6 +1611,20 @@ async function getWebCtxDeps() {
       const msgs = Array.isArray(data.messages) ? data.messages : []
       return { ...data, messages: msgs, sessionId: latest, empty: msgs.length === 0 }
     },
+
+    // ── 系统配置命令（/cache /compact-threshold /workspace /me /check /context7）──
+    // 【2026-10-05 加】这批命令原来只在 index.mjs 手写，Web 拿不到。
+    // 拆进 core/commands/cmd-system-config.mjs 后两端共用，这里补依赖。
+    //
+    // 工作区：必须给真实现 —— Web 有 /api/workspace 端点，是真实功能
+    // （/workspace 命令只是它的 slash 入口）。
+    normalizeWorkspace,
+    saveWebSettings,
+    workspacePath: () => loadWebSettings().workspacePath,
+    // /check 的工作目录：源码根（预检扫的是项目 .mjs，不是用户工作区）
+    sourceRoot: ROOT,
+    // /context7 用
+    mcpPath: MCP_PATH,
   }
 }
 
@@ -3171,6 +3195,100 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'GET' && url.pathname === '/api/mcp') {
         await mcpReady
         return json(res, 200, { servers: [...mcpClient.servers.entries()].map(([name, state]) => ({ name, status: state.proc?.exitCode == null ? 'connected' : 'stopped', toolCount: state.tools.length, tools: state.tools.map(tool => tool.name) })) })
+      }
+      // ── 插件（DSH 插件宿主）──────────────────────────────────────────
+      // 【2026-10-05 新增】对齐 CLI 的 /plugin 命令。
+      //
+      // 用户指出「web 端其实有点落后了」——CLI 侧 10-04 接入了 DSH 插件宿主
+      // （116 个官方包 + 28 个服务），但 Web 端**一个入口都没有**：
+      // CustomizePage 只有「技能 / 连接器」两个 tab，插件的装/卸/启停
+      // 只能在 CLI 里敲 /plugin。
+      //
+      // 这里把 DSH 宿主的控制 API（127.0.0.1:8790/control/*）代理出来，
+      // 前端在「定制」页加一个插件 tab 就能用。
+      //
+      // 【为什么不直接调宿主】
+      // 浏览器不知道宿主地址（且宿主可能没启动），由服务端代理可以做
+      // 「自愈拉起 + 统一错误提示」——与 CLI 的 ensureHost 同一套语义。
+      if (url.pathname === '/api/plugins' || url.pathname.startsWith('/api/plugins/')) {
+        const action = url.pathname.replace(/^\/api\/plugins\/?/, '') || 'status'
+        const DSH_HOST = process.env.DSH_HOST_URL ?? 'http://127.0.0.1:8790'
+        const ctrl = async (path, options = {}) => {
+          try {
+            const res = await fetch(`${DSH_HOST}/control${path}`, {
+              method: options.method ?? 'GET',
+              headers: options.headers,
+              body: options.body,
+              signal: AbortSignal.timeout(options.timeout ?? 15000),
+            })
+            const text = await res.text()
+            try { return { ok: res.ok, status: res.status, data: JSON.parse(text) } }
+            catch { return { ok: res.ok, status: res.status, data: text } }
+          } catch (err) {
+            return { ok: false, status: 0, error: err.message }
+          }
+        }
+        // 宿主未运行时自动拉起（与 CLI 的 /plugin 自愈逻辑一致）。
+        // 只在 GET 时自愈：POST 是用户的显式操作，拉起失败应如实报错。
+        if (req.method === 'GET' && action === 'status') {
+          let r = await ctrl('/status', { timeout: 3000 })
+          if (!r.ok) {
+            try {
+              const { execFile } = await import('node:child_process')
+              const { promisify } = await import('node:util')
+              await promisify(execFile)('bash', [join(ROOT, 'dsh-host', 'start.sh'), 'start'], { timeout: 60000 })
+              for (let i = 0; i < 5; i++) {
+                r = await ctrl('/status', { timeout: 2000 })
+                if (r.ok) break
+                await new Promise(resolve => setTimeout(resolve, 1000))
+              }
+            } catch {}
+          }
+          if (!r.ok) {
+            return json(res, 200, {
+              ok: false, running: false,
+              error: r.error ?? `HTTP ${r.status}`,
+              hint: 'bash ~/claude-code-mobile/dsh-host/start.sh start',
+            })
+          }
+          return json(res, 200, { ok: true, running: true, ...r.data })
+        }
+        if (req.method === 'GET' && action === 'providers') {
+          const r = await ctrl('/providers')
+          return json(res, r.ok ? 200 : 502, r.ok ? r.data : { error: r.error ?? `HTTP ${r.status}` })
+        }
+        if (req.method === 'GET' && action === 'bundles') {
+          const r = await ctrl('/bundles')
+          return json(res, r.ok ? 200 : 502, r.ok ? r.data : { error: r.error ?? `HTTP ${r.status}` })
+        }
+        if (req.method === 'POST' && action === 'set-plugin') {
+          const body = await readBody(req)
+          const r = await ctrl('/set-plugin', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target: body.target, enabled: !!body.enabled }),
+            timeout: 30000,
+          })
+          return json(res, r.ok ? 200 : 502, r.data ?? { error: r.error })
+        }
+        if (req.method === 'POST' && action === 'install') {
+          const body = await readBody(req)
+          const r = await ctrl('/install', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target: body.target, config: body.config }),
+            timeout: 120000,   // npm 装包慢，给足时间
+          })
+          return json(res, r.ok ? 200 : 502, r.data ?? { error: r.error })
+        }
+        if (req.method === 'POST' && action === 'remove') {
+          const body = await readBody(req)
+          const r = await ctrl('/remove', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target: body.target }),
+            timeout: 60000,
+          })
+          return json(res, r.ok ? 200 : 502, r.data ?? { error: r.error })
+        }
+        return json(res, 404, { error: `未知插件操作: ${action}` })
       }
       // 【已删除 2026-10-03】/api/backup 端点（自动备份功能下线）
       // Present 工具展示的本地文件（图片/视频）读取。

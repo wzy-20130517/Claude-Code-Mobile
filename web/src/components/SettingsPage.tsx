@@ -3,6 +3,9 @@ import { ChevronRight, Smartphone, MonitorIcon, LogOut, MoreHorizontal, Check, X
 import { getUserProfile, updateUserProfile, getUserUsage, getGatewayUsage, getSessions, deleteSession, logoutOtherSessions, changePassword, deleteAccount, logout, getProviderModels } from '../api';
 import ProviderSettings from './ProviderSettings';
 import ErrorBoundary from './ErrorBoundary';
+// 【2026-10-05 修】第 289 行用了 <EnvironmentPanel /> 但一直没 import ——
+// tsc 报 TS2304: Cannot find name 'EnvironmentPanel'（既有 bug，不是本次改动引入）。
+import EnvironmentPanel from './EnvironmentPanel';
 
 interface SettingsPageProps {
   onClose: () => void;

@@ -402,6 +402,40 @@ export function buildWebCtx(runtime, deps = {}) {
     saveMemory: deps.saveMemory,
     deleteMemory: deps.deleteMemory,
 
+    // ── 系统配置（/cache /compact-threshold /workspace /me /check /context7）──
+    // 【2026-10-05 加】这批命令原来只在 index.mjs 手写，Web 敲了报「未知命令」。
+    // 拆进 core/commands/cmd-system-config.mjs 后两端共用，这里补上依赖。
+    //
+    // 【为什么部分给降级值而不是透传】
+    // CLI 侧这些回调干的是「刷新系统提示词 / 同步运行中 api 实例」——
+    // Web 的提示词与 agent 是懒建 + 每次重建，没有需要手动失效的常驻缓存，
+    // 所以给空实现（no-op）即可，给了真实现反而可能改错对象。
+    // 工作区则必须给真实现（Web 有 /api/workspace 端点，是真实功能）。
+    getWorkspacePath: () => runtime.workspacePath || deps.workspacePath?.() || '',
+    setWorkspacePath: (p) => {
+      try {
+        const resolved = deps.normalizeWorkspace?.(p)
+        if (!resolved) return { ok: false, error: '工作区路径不可用' }
+        runtime.workspacePath = resolved
+        deps.saveWebSettings?.(resolved)
+        return { ok: true, path: resolved }
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) }
+      }
+    },
+    // Web 的提示词每轮重建，无缓存段需要手动失效 —— 这两个回调给 no-op。
+    // （CLI 侧它们会调 agent.systemPrompt = getCurrentSystemPrompt()）
+    onWorkspaceChanged: () => {},
+    onProfileChanged: () => {},
+    // /cache 用：CLI 侧同步到常驻 api 实例；Web 的 ApiClient 每次请求现读配置，
+    // 所以只需把配置写回（saveConfig 已做），同步动作是 no-op。
+    syncActiveProvider: () => {},
+    syncSessionCacheKey: () => {},
+    // /check 用：预检的工作目录 —— Web 的源码根（ROOT），不是用户工作区
+    cwd: () => deps.sourceRoot || process.cwd(),
+    // /context7 用
+    mcpPath: deps.mcpPath,
+
     // ── 语音 / 状态行 / 邮件 ──
     voiceStatus: deps.voiceStatus,
     getVoice: deps.getVoice,

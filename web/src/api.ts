@@ -789,3 +789,107 @@ export async function getAnnouncements(...args: any[]) { return [] }
 export async function createAnnouncement(...args: any[]) {}
 export async function updateAnnouncement(...args: any[]) {}
 export async function deleteAnnouncement(...args: any[]) {}
+
+// ── 插件（DSH 插件宿主）───────────────────────────────────────────────
+// 【2026-10-05 新增】对齐 CLI 的 /plugin 命令。
+//
+// 背景：CLI 侧 10-04 接入 DSH 插件宿主（116 个官方包 + 28 个服务），
+// 但 Web 端一个入口都没有 —— 用户指出「web 端其实有点落后了」。
+//
+// 服务端在 /api/plugins 代理宿主的 /control/* API（含自愈拉起），
+// 前端只需调这几个函数。
+
+export interface DshPluginStatus {
+  ok: boolean
+  running: boolean
+  error?: string
+  hint?: string
+  plugins?: string[]
+  /**
+   * 插件运行状态。宿主实际返回对象形态 `{ state: 2, active: true }`
+   * （见 dsh-host/server.mjs 的 pluginState()），旧版可能是裸数字 —— 两种都声明。
+   * state: 2=活跃 0=挂起（等依赖）
+   */
+  pluginStates?: Record<string, number | { state: number; active?: boolean }>
+  services?: { count: number; ok: string[]; failed?: string[]; skipped?: string[] }
+  providers?: Array<{
+    id: string; name: string; shimReady: boolean; webEndpoint: boolean
+    ready: boolean; modelCount: number
+  }>
+}
+
+export interface DshProvider {
+  id: string
+  name: string
+  /** CCM 接入地址（稳定门面，自动路由到 shim 或 webEndpoint） */
+  ccmBaseUrl: string
+  ccmApiKey: string
+  shimReady: boolean
+  webEndpoint: boolean
+  ready: boolean
+  models: string[]
+}
+
+export interface DshBundle {
+  name: string
+  description?: string
+  installed?: boolean
+  [key: string]: any
+}
+
+/** 宿主状态（含插件列表、服务数、provider）。宿主没跑时服务端会自动拉起。 */
+export async function getPluginsStatus(): Promise<DshPluginStatus> {
+  const res = await fetch(`${API_BASE}/plugins/status`)
+  if (!res.ok) throw new Error('无法读取插件状态')
+  return res.json()
+}
+
+/** provider 清单（含 CCM 接入地址）。 */
+export async function getPluginProviders(): Promise<{ providers: DshProvider[] }> {
+  const res = await fetch(`${API_BASE}/plugins/providers`)
+  if (!res.ok) throw new Error('无法读取 provider 列表')
+  return res.json()
+}
+
+/** 可安装的插件包。 */
+export async function getPluginBundles(): Promise<{ bundles: DshBundle[] }> {
+  const res = await fetch(`${API_BASE}/plugins/bundles`)
+  if (!res.ok) throw new Error('无法读取插件包列表')
+  return res.json()
+}
+
+/** 启用/禁用插件。 */
+export async function setPluginEnabled(target: string, enabled: boolean) {
+  const res = await fetch(`${API_BASE}/plugins/set-plugin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target, enabled }),
+  })
+  const data = await res.json()
+  if (!res.ok || data?.ok === false) throw new Error(data?.error || '操作失败')
+  return data
+}
+
+/** 安装插件（npm 装包 + 热加载，可能较慢）。 */
+export async function installPlugin(target: string, config?: Record<string, any>) {
+  const res = await fetch(`${API_BASE}/plugins/install`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target, config }),
+  })
+  const data = await res.json()
+  if (!res.ok || data?.ok === false) throw new Error(data?.error || '安装失败')
+  return data
+}
+
+/** 卸载插件。 */
+export async function removePlugin(target: string) {
+  const res = await fetch(`${API_BASE}/plugins/remove`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target }),
+  })
+  const data = await res.json()
+  if (!res.ok || data?.ok === false) throw new Error(data?.error || '卸载失败')
+  return data
+}
