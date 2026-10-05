@@ -6067,6 +6067,10 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
           // 防御：展开结果若以 / 开头会被再当成命令，导致无限递归；加前缀打断
           let body = expanded.content.trim()
           if (body.startsWith('/')) body = '请执行以下指令：\n' + body
+          // 【2026-10-05 修】直接 return 会跳过函数末尾的清理，导致活动看板
+          // 永久显示「◆ /xxx 秒数一直涨」。这三处 return 分支都要自己清。
+          activeSlashCommand = null
+          refreshActivityBoard()
           return processInput(body)
         }
         // ── skill 直接当 slash 命令用（对齐官方）──────────────────
@@ -6092,7 +6096,21 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
             let sbody = String(ex?.content || '').trim()
             if (!sbody) return `skill "${name}" 内容为空`
             if (sbody.startsWith('/')) sbody = '请执行以下指令：\n' + sbody
-            return processInput(sbody)
+            // 【2026-10-05 修】静默注入：skill 正文（可能几万字）不再回显到终端。
+            //
+            // 原来直接 processInput(sbody) 会把整个 SKILL.md 当成"用户消息"画出来，
+            // 结果：① 屏幕被正文刷满，用户看不到自己的对话；② /onetake 这种
+            // 22KB 的 skill 展开一次就占掉大半屏。
+            //
+            // 但正文对模型是必须的（它就是 skill 的全部内容），所以只改"回显"，
+            // 不改"发送"—— 这正是 opts.silent 的语义（静默接续那条路径已在用）。
+            //
+            // 用户可见的只有上面那行 `[/onetake → skill · 全局]` 提示。
+            emit(`${C.dim}  skill 正文 ${sbody.length} 字已注入（终端不显示）${C.reset}\n`)
+            // 同上：return 前必须清活动看板，否则 ◆ /onetake 会永久挂着
+            activeSlashCommand = null
+            refreshActivityBoard()
+            return processInput(sbody, { silent: true })
           }
         }
         // QQ 来的命令必须走非交互路径。
@@ -6120,6 +6138,8 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
           processing = false
           abortController = null
           rl.addHistory(input)
+          activeSlashCommand = null
+          refreshActivityBoard()
           return processInput(commandResult.__editorInput)
         }
         // 必须走 emit：全屏模式下直接写 stdout 会被下一次 flushRender 覆盖，
