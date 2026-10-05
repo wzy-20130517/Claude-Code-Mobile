@@ -86,6 +86,43 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [sendKey, setSendKey] = useState(localStorage.getItem('sendKey') || 'button_only'); // 默认仅按钮发送
   const [newlineKey, setNewlineKey] = useState(localStorage.getItem('newlineKey') || 'enter');
 
+  // ── 工作区（2026-10-01 用户要求：与 CLI /workspace 一致）─────────
+  // 后端早已就绪（GET/PATCH /api/workspace + 目录浏览），前端一直零调用。
+  const [workspace, setWorkspace] = useState<string>('');
+  const [wsEditing, setWsEditing] = useState(false);
+  const [wsInput, setWsInput] = useState('');
+  const [wsError, setWsError] = useState('');
+  const [wsSaving, setWsSaving] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/workspace').then(r => r.json())
+      .then(d => setWorkspace(d.workspacePath || ''))
+      .catch(() => {});
+  }, []);
+
+  async function saveWorkspace() {
+    const p = wsInput.trim();
+    if (!p) { setWsError('路径不能为空'); return; }
+    if (!p.startsWith('/')) { setWsError('必须是绝对路径（以 / 开头）'); return; }
+    setWsSaving(true);
+    setWsError('');
+    try {
+      const r = await fetch('/api/workspace', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspacePath: p }),
+      });
+      const d = await r.json();
+      if (!r.ok) { setWsError(d.error || '保存失败'); return; }
+      setWorkspace(d.workspacePath || p);
+      setWsEditing(false);
+    } catch (e: any) {
+      setWsError(e?.message || '网络错误');
+    } finally {
+      setWsSaving(false);
+    }
+  }
+
   const isSelfHosted = localStorage.getItem('user_mode') === 'selfhosted';
 
   useEffect(() => {
@@ -540,42 +577,6 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     );
   }
 
-  // ── 工作区（2026-10-01 用户要求：与 CLI /workspace 一致）─────────
-  // 后端早已就绪（GET/PATCH /api/workspace + 目录浏览），前端一直零调用。
-  const [workspace, setWorkspace] = useState<string>('');
-  const [wsEditing, setWsEditing] = useState(false);
-  const [wsInput, setWsInput] = useState('');
-  const [wsError, setWsError] = useState('');
-  const [wsSaving, setWsSaving] = useState(false);
-
-  useEffect(() => {
-    fetch('/api/workspace').then(r => r.json())
-      .then(d => setWorkspace(d.workspacePath || ''))
-      .catch(() => {});
-  }, []);
-
-  async function saveWorkspace() {
-    const p = wsInput.trim();
-    if (!p) { setWsError('路径不能为空'); return; }
-    if (!p.startsWith('/')) { setWsError('必须是绝对路径（以 / 开头）'); return; }
-    setWsSaving(true);
-    setWsError('');
-    try {
-      const r = await fetch('/api/workspace', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspacePath: p }),
-      });
-      const d = await r.json();
-      if (!r.ok) { setWsError(d.error || '保存失败'); return; }
-      setWorkspace(d.workspacePath || p);
-      setWsEditing(false);
-    } catch (e: any) {
-      setWsError(e?.message || '网络错误');
-    } finally {
-      setWsSaving(false);
-    }
-  }
 
   function renderGeneral() {
     return (
