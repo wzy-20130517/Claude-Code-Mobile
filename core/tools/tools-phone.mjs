@@ -1593,7 +1593,20 @@ export class PhoneDeviceTool extends Tool {
       const disp = await targetDisplay()
       lines.push(`目标屏: ${disp >= 0 ? disp : '（无，idle 模式）'}`)
     } catch { lines.push('目标屏: 获取失败') }
-    lines.push(`操作模式: ${sessionMode || '（未选）'}`)
+    // 【2026-10-05 修】原来只显示 sessionMode（本次会话内存值），而 sessionMode
+    // 要等首次调用手机工具时才由 ensurePhoneMode() 初始化。用户设了偏好
+    // （device.json 的 phoneMode）但还没操作过手机时，这里会误导性地显示「未选」。
+    // 修法：sessionMode 为空时回退显示偏好值，并标注来源。
+    if (sessionMode) {
+      lines.push(`操作模式: ${sessionMode}`)
+    } else {
+      const pref = getPhoneModePreference()
+      const prefLabel = pref === 'foreground' ? '前台（操作主屏）'
+        : pref === 'background' ? '后台（虚拟副屏）'
+        : pref === 'ask' ? '每次询问'
+        : null
+      lines.push(`操作模式: ${prefLabel ? `${prefLabel}（偏好，下次调用生效）` : '（未选）'}`)
+    }
     lines.push(`配置通道: ${cfg.shell}${cfg.shell === 'auto' ? '（自动：先试 Shizuku，失败落 adb）' : ''}`)
     lines.push(`adb 目标: ${cfg.adb ? `${cfg.adb.host}:${cfg.adb.port}` : '（未配置）'}`)
 
