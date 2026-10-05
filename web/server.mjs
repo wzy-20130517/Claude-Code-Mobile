@@ -8,45 +8,45 @@ process.env.CCM_WEB = '1'
 import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, writeFileSync, existsSync, statSync, readdirSync, realpathSync, mkdirSync, unlinkSync, appendFileSync } from 'node:fs'
-import { getImageGenConfig, setImageGenConfig } from '../core/tools-imagegen.mjs'
+import { getImageGenConfig, setImageGenConfig } from '../core/tools/tools-imagegen.mjs'
 import { join, extname, resolve, relative, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { homedir } from 'node:os'
 import { spawn } from 'node:child_process'
-import { Agent } from '../core/agent.mjs'
-import { ApiClient } from '../core/api.mjs'
-import { createEngineToolkit } from '../core/engine-setup.mjs'
-import { setPhoneModePrompter, setPhoneFinishAction } from '../core/tools-phone.mjs'
-import { startKeepalive, stopKeepalive, keepaliveStatus } from '../core/web-keepalive.mjs'
-import { SessionStore, ClaudeMdLoader } from '../core/persistence.mjs'
-import { MCPClient } from '../core/mcp-client.mjs'
-import { CompactService } from '../core/compact.mjs'
-import { CustomCommandLoader } from '../core/custom-commands.mjs'
-import { SkillLoader, expandActiveSkill, globalSkillsDir } from '../core/skills.mjs'
+import { Agent } from '../core/agent/agent.mjs'
+import { ApiClient } from '../core/api/api.mjs'
+import { createEngineToolkit } from '../core/infra/engine-setup.mjs'
+import { setPhoneModePrompter, setPhoneFinishAction } from '../core/tools/tools-phone.mjs'
+import { startKeepalive, stopKeepalive, keepaliveStatus } from '../core/infra/web-keepalive.mjs'
+import { SessionStore, ClaudeMdLoader } from '../core/session/persistence.mjs'
+import { MCPClient } from '../core/integrations/mcp-client.mjs'
+import { CompactService } from '../core/session/compact.mjs'
+import { CustomCommandLoader } from '../core/commands/custom-commands.mjs'
+import { SkillLoader, expandActiveSkill, globalSkillsDir } from '../core/commands/skills.mjs'
 // 【2026-10-03】backup 模块已删除（自动备份功能下线）
-import { backupBeforeCompact } from '../core/compact-trash.mjs'
-import { listTrash, restoreTrash, clearTrash } from '../core/trash.mjs'
-import { MultiUndoStore } from '../core/undo-multi.mjs'
-import { PresentTool } from '../core/present-tool.mjs'
-import { HookManager } from '../core/hooks.mjs'
+import { backupBeforeCompact } from '../core/session/compact-trash.mjs'
+import { listTrash, restoreTrash, clearTrash } from '../core/session/trash.mjs'
+import { MultiUndoStore } from '../core/session/undo-multi.mjs'
+import { PresentTool } from '../core/tools/present-tool.mjs'
+import { HookManager } from '../core/infra/hooks.mjs'
 // 轮数上限从单一真值源取，避免 Web 侧硬编码数字漂移
-import { NORMAL_MAX_TURNS } from '../core/plan.mjs'
-import { normalizeProviderUrl, providerEndpointPreview } from '../core/provider-url.mjs'
-import { handleGoalCommand } from '../core/cmd-goal.mjs'
-import { atomicWrite } from '../core/atomic.mjs'
-import { InputHistory } from '../core/agent-tools.mjs'
-import { extractAtRefs, buildAtContext } from '../core/at-refs.mjs'
-import { setVisionConfig } from '../core/ocr.mjs'
-import { WEB_SYSTEM_PROMPT, WEB_SESSION_START_PROMPT } from './prompts.mjs'
-import { buildCommandTable } from '../core/cmd-registry.mjs'
+import { NORMAL_MAX_TURNS } from '../core/agent/plan.mjs'
+import { normalizeProviderUrl, providerEndpointPreview } from '../core/api/provider-url.mjs'
+import { handleGoalCommand } from '../core/commands/cmd-goal.mjs'
+import { atomicWrite } from '../core/infra/atomic.mjs'
+import { InputHistory } from '../core/agent/agent-tools.mjs'
+import { extractAtRefs, buildAtContext } from '../core/infra/at-refs.mjs'
+import { setVisionConfig } from '../core/phone/ocr.mjs'
+import { WEB_SYSTEM_PROMPT, WEB_SESSION_START_PROMPT } from '../core/infra/prompts.mjs'
+import { buildCommandTable } from '../core/commands/cmd-registry.mjs'
 import { buildWebCtx, runWebCommand, WizardRequired, SelectRequired } from './command-adapter.mjs'
 import { ProjectStore } from './projects.mjs'
-import { getTavilyKey } from '../core/tavily.mjs'
+import { getTavilyKey } from '../core/tools/tavily.mjs'
 // 【2026-10-03】卡死检测（freeze-detector）已按用户要求整体删除。
-import { DATA_DIR, resolveConfigPath, WEB_CONFIG_PATH, HOOKS_PATH, MCP_PATH } from '../core/paths.mjs'
+import { DATA_DIR, resolveConfigPath, WEB_CONFIG_PATH, HOOKS_PATH, MCP_PATH } from '../core/infra/paths.mjs'
 import { startWebQqBridge, loadQqConfig, saveQqConfig } from './qq-integration.mjs'
-import { listEndpoints as listQqEndpoints, detectEndpoint, endpointLabelOf } from '../core/qq-config.mjs'
-import { QQPushTool, QQRecallTool } from '../core/qq-tools.mjs'
+import { listEndpoints as listQqEndpoints, detectEndpoint, endpointLabelOf } from '../core/integrations/qq-config.mjs'
+import { QQPushTool, QQRecallTool } from '../core/integrations/qq-tools.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 
@@ -55,7 +55,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url))
 let _goalSnapshotFn = null
 async function _loadGoalSnapshot() {
   if (!_goalSnapshotFn) {
-    const m = await import('../core/goal.mjs')
+    const m = await import('../core/agent/goal.mjs')
     _goalSnapshotFn = m.snapshot
   }
   return _goalSnapshotFn
@@ -1432,23 +1432,27 @@ async function getWebCtxDeps() {
   // 动态 import 有缓存，重复调用不会重复求值。
   const [
     autoMem, compactTrash, ext, contextFiles,
-    imagegen, memdir, voice, traceMod, taskStore, mcpCfg,
+    imagegen, memdir, voice, traceMod, teamMod, taskMod,
     markdownMod, modelListMod, keyPoolMod, deviceMod,
   ] = await Promise.all([
-    import('../core/auto-memory.mjs').catch(() => null),
-    import('../core/compact-trash.mjs').catch(() => null),
-    import('../core/cmd-extensions.mjs').catch(() => null),
-    import('../core/context-files.mjs').catch(() => null),
-    import('../core/tools-imagegen.mjs').catch(() => null),
-    import('../core/memdir.mjs').catch(() => null),
-    import('../core/voice-read.mjs').catch(() => null),
-    import('../core/trace.mjs').catch(() => null),
-    import('../core/team-store.mjs').catch(() => null),
-    import('../core/mcp-config.mjs').catch(() => null),
-    import('../core/markdown.mjs').catch(() => null),
-    import('../core/model-list.mjs').catch(() => null),
-    import('../core/cmd-key-pool.mjs').catch(() => null),
-    import('../core/device.mjs').catch(() => null),
+    import('../core/agent/auto-memory.mjs').catch(() => null),
+    import('../core/session/compact-trash.mjs').catch(() => null),
+    import('../core/commands/cmd-extensions.mjs').catch(() => null),
+    import('../core/session/context-files.mjs').catch(() => null),
+    import('../core/tools/tools-imagegen.mjs').catch(() => null),
+    import('../core/infra/memdir.mjs').catch(() => null),
+    import('../core/phone/voice-read.mjs').catch(() => null),
+    import('../core/api/trace.mjs').catch(() => null),
+    // 【2026-10-05 修】原来引用 ../core/team-store.mjs 和 ../core/mcp-config.mjs，
+    // 这两个文件从来不存在（历史遗留），靠 .catch(() => null) 静默兜底成 null。
+    // 真实来源：listTeams 在 agent/teams.mjs、listTasks 在 agent/tasks.mjs、
+    // MCP_CONFIG_PATH 本文件顶部已有（第 120 行），不需要额外模块。
+    import('../core/agent/teams.mjs').catch(() => null),
+    import('../core/agent/tasks.mjs').catch(() => null),
+    import('../core/ui/markdown.mjs').catch(() => null),
+    import('../core/api/model-list.mjs').catch(() => null),
+    import('../core/commands/cmd-key-pool.mjs').catch(() => null),
+    import('../core/phone/device.mjs').catch(() => null),
   ])
 
   return {
@@ -1519,20 +1523,20 @@ async function getWebCtxDeps() {
     cmdTemperature: ext?.cmdTemperature,
 
     // ── 团队 / 任务 ──
-    listTeams: taskStore?.listTeams,
-    listTasks: taskStore?.listTasks,
-    listTaskLists: taskStore?.listTaskLists,
-    teamOverview: taskStore?.teamOverview,
-    formatTeamOverview: taskStore?.formatTeamOverview,
-    inboxCounts: taskStore?.inboxCounts,
-    deleteTeam: taskStore?.deleteTeam,
-    resetTaskList: taskStore?.resetTaskList,
+    listTeams: teamMod?.listTeams,
+    listTasks: taskMod?.listTasks,
+    listTaskLists: taskMod?.listTaskLists,
+    teamOverview: teamMod?.teamOverview,
+    formatTeamOverview: teamMod?.formatTeamOverview,
+    inboxCounts: teamMod?.inboxCounts,
+    deleteTeam: teamMod?.deleteTeam,
+    resetTaskList: taskMod?.resetTaskList,
 
     // ── 权限 ──
     cmdPermissions: ext?.cmdPermissions,
 
     // ── MCP ──
-    mcpConfigPath: mcpCfg?.MCP_CONFIG_PATH,
+    mcpConfigPath: MCP_CONFIG_PATH,
 
     // ── 其他命令模块要的（2026-09-24 批量补）──
     //
@@ -1659,7 +1663,7 @@ async function executeSlashCommand(runtime, raw) {
       // Web 侧转成 { kind:'wizard' }，前端弹表单。
       // 两边最终都调用 core/wizard-steps.mjs 里**同一份** apply 落盘。
       if (out && typeof out === 'object' && out.__wizard) {
-        const { getWizard } = await import('../core/wizard-steps.mjs')
+        const { getWizard } = await import('../core/commands/wizard-steps.mjs')
         const wizard = getWizard(out.__wizard)
         if (wizard) {
           const config = loadWebConfig()
@@ -1674,7 +1678,7 @@ async function executeSlashCommand(runtime, raw) {
       if (out != null) {
         // 命令能跑但改了不影响 Web 的（如 /font 只影响终端字体）→ 追加说明。
         // 用户要求：「有些只修改 cli，对 web 无效」—— 不说明的话用户会以为改坏了。
-        const { appendWebNoEffectNote } = await import('../core/cmd-registry.mjs')
+        const { appendWebNoEffectNote } = await import('../core/commands/cmd-registry.mjs')
         return {
           kind: 'output',
           text: appendWebNoEffectNote(name, String(out)),
@@ -1832,7 +1836,7 @@ async function executeSlashCommand(runtime, raw) {
       const sessionProviderId = runtime.providerId
       const savedCurrent = config.current
       config.current = sessionProviderId || config.current
-      const { cmdConfig } = await import('../core/cmd-extensions.mjs')
+      const { cmdConfig } = await import('../core/commands/cmd-extensions.mjs')
       let output
       try {
         output = await cmdConfig(args, config, runtime.agent?.api || null,
@@ -1864,7 +1868,7 @@ async function executeSlashCommand(runtime, raw) {
       // 原来这里写的是 `typeof output === 'string' ? output : '(无输出)'` ——
       // 对象被吞成"(无输出)"，用户敲 /config provider add 得到一句莫名其妙的话。
       if (output && typeof output === 'object' && output.__wizard) {
-        const { getWizard } = await import('../core/wizard-steps.mjs')
+        const { getWizard } = await import('../core/commands/wizard-steps.mjs')
         const wizard = getWizard(output.__wizard)
         if (wizard) {
           return { kind: 'wizard', wizardId: output.__wizard, title: wizard.title, steps: wizard.steps({ config: loadWebConfig() }) }
@@ -1994,7 +1998,7 @@ async function executeSlashCommand(runtime, raw) {
   }
   if (name === 'tasks' || name === 'team') {
     const [{ listTasks, listTaskLists }, team] = await Promise.all([
-      import('../core/tasks.mjs'), import('../core/teams.mjs'),
+      import('../core/agent/tasks.mjs'), import('../core/agent/teams.mjs'),
     ])
     if (name === 'tasks') {
       const lists = listTaskLists()
@@ -2094,7 +2098,7 @@ async function executeSlashCommand(runtime, raw) {
     return { kind: 'output', text: `**会话摘要**\n\n- 标题：${runtime.title || '新对话'}\n- 用户消息：${userMsgs.length} 条\n- 总消息：${hist.length} 条\n- 创建：${runtime.createdAt || '—'}\n- 最后活动：${runtime.updatedAt || '—'}\n\n最近几条：\n${userMsgs.slice(-5).map(m => `- ${String(m.uiText || m.content || '').slice(0, 60)}`).join('\n') || '（无）'}` }
   }
   if (name === 'compact-trash') {
-    const { listCompactTrash } = await import('../core/compact-trash.mjs')
+    const { listCompactTrash } = await import('../core/session/compact-trash.mjs')
     const items = listCompactTrash()
     if (!items.length) return { kind: 'output', text: '压缩回收站是空的。' }
     return { kind: 'output', text: `**压缩回收站**（${items.length} 项）\n\n${items.slice(0, 20).map((it, i) => `${i}. ${it.name || it.file} — ${it.size || ''} ${it.time || ''}`).join('\n')}` }
@@ -2132,7 +2136,7 @@ async function executeSlashCommand(runtime, raw) {
 
   // ── 配置类命令（与 CLI 共享同一份磁盘配置）──
   if (name === 'pexels') {
-    const { makeIntegrationCommands } = await import('../core/cmd-integrations.mjs')
+    const { makeIntegrationCommands } = await import('../core/commands/cmd-integrations.mjs')
     const integ = makeIntegrationCommands({ maskKey: (k) => k ? k.slice(0, 8) + '...' + k.slice(-4) : '(未配置)' })
     return { kind: 'output', text: String(await integ.pexels(args) || '') }
   }
@@ -2154,7 +2158,7 @@ async function executeSlashCommand(runtime, raw) {
   }
   if (name === 'mail') {
     // 邮箱配置存在 mail-mcp-config.mjs（MCP 邮件服务共用同一份）。
-    const { mailStatus } = await import('../core/mail-mcp-config.mjs')
+    const { mailStatus } = await import('../core/integrations/mail-mcp-config.mjs')
     const status = mailStatus() || {}
     const accounts = status.accounts || status.aliases || []
     if (!accounts.length) {
@@ -2384,7 +2388,7 @@ async function buildAgent(runtime) {
   // 不注入的话用户在 Web 设了风格也不生效（风格本质是往提示词里加一段）。
   let outputStyleSection = ''
   try {
-    const { getOutputStyle, getOutputStyleSection, listOutputStyles } = await import('../core/output-styles.mjs')
+    const { getOutputStyle, getOutputStyleSection, listOutputStyles } = await import('../core/ui/output-styles.mjs')
     const styleName = config.outputStyle
     if (styleName && styleName !== 'default') {
       const st = getOutputStyle(styleName, workspace)
@@ -2655,7 +2659,7 @@ const server = http.createServer(async (req, res) => {
       // 读写同一个 config.outputStyle —— 谁改都能生效（注入逻辑在 2411 行，每轮读）。
       if (url.pathname === '/api/output-styles') {
         const workspace = loadWebSettings().workspacePath || process.cwd()
-        const { listOutputStyles } = await import('../core/output-styles.mjs')
+        const { listOutputStyles } = await import('../core/ui/output-styles.mjs')
         const map = listOutputStyles(workspace)
         if (req.method === 'GET') {
           const config = loadWebConfig()
@@ -2895,7 +2899,7 @@ const server = http.createServer(async (req, res) => {
           // 【2026-09-20】core/tavily.mjs 的 getTavilyKey 有模块级缓存，
           // 不清的话本进程内一直用旧值 —— 用户改了 key 却「没生效」。
           try {
-            const { resetTavilyKeyCache } = await import('../core/tavily.mjs')
+            const { resetTavilyKeyCache } = await import('../core/tools/tavily.mjs')
             resetTavilyKeyCache()
           } catch {}
         }
@@ -2962,7 +2966,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'GET' && url.pathname === '/api/connectors/status') {
         const out = { github: { connected: false, detail: '' }, qq: { connected: false, detail: '' } }
         try {
-          const { githubStatus } = await import('../core/github.mjs')
+          const { githubStatus } = await import('../core/integrations/github.mjs')
           const st = githubStatus()
           out.github = {
             connected: !!st.configured,
@@ -2992,14 +2996,14 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, out)
       }
       if (req.method === 'GET' && url.pathname === '/api/wizards') {
-        const { wizardIds, getWizard } = await import('../core/wizard-steps.mjs')
+        const { wizardIds, getWizard } = await import('../core/commands/wizard-steps.mjs')
         return json(res, 200, {
           wizards: wizardIds().map(id => ({ id, title: getWizard(id)?.title || id })),
         })
       }
       const wizardMatch = url.pathname.match(/^\/api\/wizards\/([a-z0-9-]+)$/i)
       if (wizardMatch) {
-        const { getWizard } = await import('../core/wizard-steps.mjs')
+        const { getWizard } = await import('../core/commands/wizard-steps.mjs')
         const wizard = getWizard(wizardMatch[1])
         if (!wizard) return json(res, 404, { error: `向导不存在: ${wizardMatch[1]}` })
         const config = loadWebConfig()
@@ -3255,7 +3259,7 @@ const server = http.createServer(async (req, res) => {
           //     Shizuku 优先，不可用落本机 adb（adb 用 exec-out 直取，不落手机盘）
           if (!ok) {
             try {
-              const { captureScreen } = await import('../core/device.mjs')
+              const { captureScreen } = await import('../core/phone/device.mjs')
               const shot = await captureScreen(outPath, 25000)
               if (shot.ok && existsSync(outPath)) ok = true
               else if (!shot.ok) {

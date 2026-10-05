@@ -23,9 +23,9 @@ import { loadWebConfig, saveWebConfig } from './config-bridge.mjs'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { withNonInteractive, withDelegatedInteraction } from '../core/wizard.mjs'
-import { setSelectDelegate } from '../core/select.mjs'
-import { setMarkdownTheme, getMarkdownTheme, markdownThemeNames } from '../core/markdown.mjs'
+import { withNonInteractive, withDelegatedInteraction } from '../core/commands/wizard.mjs'
+import { setSelectDelegate } from '../core/ui/select.mjs'
+import { setMarkdownTheme, getMarkdownTheme, markdownThemeNames } from '../core/ui/markdown.mjs'
 
 /**
  * 在「交互由前端接管」的语境里跑一个命令处理器。
@@ -62,7 +62,7 @@ export function runWebCommand(handler, args) {
   // 注册「选择器委托器」：runSelect 在委托模式下会调它，把列表交给前端。
   //
   // 【为什么要注册而不是走 ctx.runSelect】
-  // core/model-list.mjs 是**直接 import** runSelect 的（`import { runSelect } from './select.mjs'`），
+  // core/model-list.mjs 是**直接 import** runSelect 的（`import { runSelect } from '../core/ui/select.mjs'`），
   // 签名里没有 ctx —— 为 Web 改它的签名会污染 CLI 侧。所以用模块级注册器，
   // 只在 Web 跑命令期间生效，跑完立刻注销（finally），避免影响其他调用方。
   const prev = setSelectDelegate((o) => {

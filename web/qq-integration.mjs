@@ -30,7 +30,7 @@ import {
   detectEndpoint,
   otherEnabledEndpoints,
   endpointLabelOf,
-} from '../core/qq-config.mjs'
+} from '../core/integrations/qq-config.mjs'
 
 export { QQ_CONFIG_PATH }
 
@@ -66,7 +66,7 @@ export async function startWebQqBridge({ getActiveRuntime, runMessage, emit, log
     return { bridge: null, reason: '未启用（用 /qq on 开启）' }
   }
 
-  const { QQBridge } = await import('../core/qq-bridge.mjs')
+  const { QQBridge } = await import('../core/integrations/qq-bridge.mjs')
 
   let bridge = null
   bridge = new QQBridge({
