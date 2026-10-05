@@ -273,6 +273,20 @@ export class UserInputHistoryTool extends Tool {
 
 // 工具3：主动记忆写入
 // 让助手能在对话中主动把重要事项写入 CLAUDE.md，跨会话保留
+/**
+ * CLAUDE.md 被写入后的失效回调。
+ *
+ * 【为什么用回调而不是直接 import】agent-tools.mjs 被 index.mjs 引用，
+ * 若在这里 import index.mjs 的 invalidateSystemPromptSection 会形成循环依赖
+ * （ESM 会报 "Cannot access before initialization"）。所以由 index.mjs 启动时注入。
+ */
+let _memoryInvalidateHook = null
+
+/** 由 index.mjs 在启动时调用，注入提示词段失效函数。 */
+export function setMemoryInvalidateHook(fn) {
+  _memoryInvalidateHook = typeof fn === 'function' ? fn : null
+}
+
 export class MemoryTool extends Tool {
   constructor(memoryPath = null, memoryLabel = 'CLAUDE.md') {
     super({
@@ -393,6 +407,11 @@ export class MemoryTool extends Tool {
       writeFileSync(path, cur + separator + text + '\n', 'utf-8')
       // 互斥：主 agent 刚写过记忆，本周期不再自动提取（防重复）
       try { markMainWroteMemory() } catch {}
+      // 【2026-10-05】CLAUDE.md 变了 → 系统提示词里那段（base 段）要重算。
+      // 不做的话：写了记忆但下一轮提示词里还是旧的，模型看不到自己刚记的东西。
+      // 注意：这里不能直接 import（agent-tools 被 index.mjs 引用，反向 import 会成环），
+      // 所以用回调注入 —— 见 setMemoryInvalidateHook。
+      try { _memoryInvalidateHook?.() } catch {}
       return `已写入 ${this.memoryLabel}（追加 ${text.length} 字符）`
     }
 
