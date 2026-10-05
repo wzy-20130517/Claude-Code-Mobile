@@ -190,10 +190,11 @@ const KNOWN_GLOBALS = new Set([
 function loadTypeScript(errors) {
   try {
     // Web build 已安装 TypeScript；只用其 AST parser，绝不执行受检源码。
-    return require('../web/node_modules/typescript')
+    // 路径注意：本文件在 core/infra/，要回退两级到项目根（重组前在 core/ 只需一级）。
+    return require('../../web/node_modules/typescript')
   } catch (error) {
     errors.push({
-      file: 'core/restart-preflight.mjs',
+      file: 'core/infra/restart-preflight.mjs',
       detail: `无法加载 AST 静态检查器 TypeScript：${error.message}。为安全起见拒绝重启。`,
     })
     return null
