@@ -760,8 +760,16 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
       className="customize-shell flex h-full w-full bg-claude-bg text-claude-text font-sans"
       /* 【2026-09-20】手机上列表/详情互斥切换靠这个属性判断（见 index.css 的定制页段）。
          用真实状态而不是 :has() 猜内容 —— 后者依赖 DOM 结构细节，改文案就失效。
-         detail-open：选中了技能/连接器，应只显示详情；否则只显示列表。 */
-      data-detail-open={selectedSkillId ? '1' : '0'}
+
+         【2026-10-05 修】原判断 `selectedSkillId ? '1' : '0'` 有两个洞：
+           · overview 的内容也在 .customize-detail 里 → 判成 0 时整页空白
+           · plugins 同理（它没有中列，面板就在详情区）
+         实测症状：手机上进「定制」看到「顶部导航条 + 下方全空白」，
+         且「插件」tab 被挤出屏外（三个 tab 各 232px > 屏宽 393px）。
+
+         新逻辑：**只有「技能/连接器」且未选中条目时才隐藏详情**（那时该显示列表）。
+         其余情况（overview / plugins / 已选中）都要显示详情区。 */
+      data-detail-open={((tab === 'skills' || tab === 'connectors') && !selectedSkillId) ? '0' : '1'}
     >
 
       {/* 1. Left Navigation (Fixed width) */}

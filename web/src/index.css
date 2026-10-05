@@ -1331,8 +1331,30 @@ html.dark .cowork-card:hover {
   .customize-nav::-webkit-scrollbar { display: none; }
   .customize-nav > * { flex: 0 0 auto !important; }
   .customize-nav [class*="mb-6"] { margin-bottom: 0 !important; }
-  .customize-nav nav { display: flex !important; flex-direction: row !important; gap: 4px !important; }
-  .customize-nav nav > * { flex: 0 0 auto !important; white-space: nowrap !important; }
+  /* 【2026-10-05 修】三个 tab 原来各 232px 固定宽（总 696px），
+     手机屏 393px → 「插件」整个在屏幕外，用户不知道能横向滑（实测反馈
+     「为啥没看见插件管理页」）。改成均分**剩余**空间、不溢出。
+
+     注意别写 width:100% —— 同一行还有「← 定制」按钮（约 77px），
+     width:100% 是按父容器全宽算的，加上按钮就又溢出了（实测 406+77 > 393）。
+     用 flex:1 1 auto 吃剩余空间才对。 */
+  .customize-nav nav {
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 4px !important;
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+  }
+  .customize-nav nav > * {
+    flex: 1 1 0 !important;      /* 均分宽度，而不是各自撑到 232px */
+    min-width: 0 !important;
+    white-space: nowrap !important;
+    justify-content: center !important;
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+    font-size: 13.5px !important;
+  }
+  .customize-nav nav > * img { width: 18px !important; height: 18px !important; }
 
   .customize-list {
     width: 100% !important;

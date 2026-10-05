@@ -163,7 +163,7 @@ const PluginPanel: React.FC = () => {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowInstall(v => !v)}
-              className="flex items-center gap-1.5 rounded-lg border border-claude-border px-3 py-1.5 text-[13px] font-medium text-claude-text transition-colors hover:bg-claude-hover"
+              className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-claude-border px-3 py-1.5 text-[13px] font-medium text-claude-text transition-colors hover:bg-claude-hover"
             >
               <Download size={14} />
               安装
@@ -321,7 +321,7 @@ const PluginPanel: React.FC = () => {
                           <button
                             onClick={() => void handleInstallFor(b.name)}
                             disabled={!!busy}
-                            className="flex flex-shrink-0 items-center gap-1 rounded-md border border-claude-border px-2.5 py-1 text-[12px] font-medium text-claude-text transition-colors hover:bg-claude-hover disabled:opacity-40"
+                            className="flex flex-shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-claude-border px-2.5 py-1 text-[12px] font-medium text-claude-text transition-colors hover:bg-claude-hover disabled:opacity-40"
                           >
                             {busy === b.name ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
                             安装
