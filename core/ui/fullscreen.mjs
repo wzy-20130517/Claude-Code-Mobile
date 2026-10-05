@@ -264,6 +264,25 @@ export class FullscreenRenderer {
    */
   endLiveBlock({ keep = false } = {}) {
     if (!this._liveActive) return;
+
+    // 【2026-10-05 修：结束实时块时补偿 bodyScroll，否则视角被拉动】
+    //
+    // 症状：用户上翻脱离跟随后，流式输出结束 / 工具输出窗口收起那一刻，
+    // 正文会「往上跳」几行（实时块占几行就跳几行）。
+    //
+    // 根因：下面 `bodyLines.length = _liveStart` 把实时块那几行删掉了，
+    // 总行数减少 → render 里 `start = total - bodyH - bodyScroll` 的 total 变小
+    // → 视角顶部行号前移 → 画面看起来往上跳。
+    // bodyScroll 的定义是「距底几物理行」，总行数变了它必须等量补偿，
+    // 视角才能定住 —— 这与 appendBody / updateLiveBlock 里的 delta 补偿是同一件事，
+    // 但这两处都只在**内容增加**时补偿，删除路径漏了。
+    //
+    // 测法：上翻 5 行 → beginLiveBlock → 灌 4 行 → endLiveBlock
+    //  修复前：视角从「第 31 行」跳到「第 27 行」（上移 4 行）
+    //  修复后：保持「第 31 行」不动
+    const wasScrolled = this.bodyScroll > 0;
+    const beforeLen = wasScrolled ? this._wrappedBody().length : 0;
+
     if (!keep && this.bodyLines.length > this._liveStart) {
       this.bodyLines.length = this._liveStart;
       // 同 updateLiveBlock：局部失效，别把整个前缀缓存扔掉
@@ -272,6 +291,16 @@ export class FullscreenRenderer {
     this._liveActive = false;
     this._liveStart = -1;
     this._openLine = false;
+
+    if (wasScrolled) {
+      // 距底增量：Δ = 新总行数 − 旧总行数（负数 = 内容变少）。
+      // 保持视角不动 = bodyScroll 加这个负数（即减少）。
+      const after = this._wrappedBody();
+      const delta = after.length - beforeLen;
+      if (delta !== 0) {
+        this.bodyScroll = Math.max(0, this.bodyScroll + delta);
+      }
+    }
   }
 
   setBody(lines) {
@@ -431,6 +460,22 @@ export class FullscreenRenderer {
       // V8 对 splice 的头部删除有专门优化；copyWithin 是逐元素拷贝，元素越多越慢。
       this.bodyLines.splice(0, drop);
       this._dropWrappedPrefix(drop);
+      // 【2026-10-05 修：_liveStart 跟着前移】
+      //
+      // 截断从**头部**丢 drop 条逻辑行，所有行号整体前移 drop。
+      // _liveStart（实时块起点下标）若不跟着减就指向错误位置。
+      //
+      // 【现实场景为什么仍要修】endLiveBlock 时实时块内容通常在 bodyLines 末尾
+      // （工具执行阶段输出，中间不会插 appendBody），此时截断不会越过块起点，
+      // 影响很小。但 updateLiveBlock 里 `bodyLines.length > _liveStart` 的
+      // 截断判断依赖它 —— 块跨在截断边界上时（长会话 + 大量输出）会错位。
+      //
+      // 【公式说明】减 drop 是标准换算（行号整体前移）；上限钳到当前总长
+      // （截断把块整个吞掉时，块内容已随头部丢弃，起点退化为末尾）。
+      // ⚠ 别钳到 0 —— 那会让 endLiveBlock 把 [0, length) 全当块内容删掉。
+      if (this._liveStart >= 0) {
+        this._liveStart = Math.max(0, Math.min(this._liveStart - drop, this.bodyLines.length));
+      }
     }
   }
 
