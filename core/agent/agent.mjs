@@ -61,7 +61,7 @@ function looksLikeCompleteJson(s) {
 }
 
 export class Agent {
-  constructor({ api, visionApi = null, systemPrompt, tools, maxTurns = NORMAL_MAX_TURNS, onText, onReasoning, onToolUse, onToolArgsPreview, onToolProgress, onToolResult, onError, onPermissionRequest, onTodoUpdate, onUsage, onTurnEnd, onTurnLimitApproaching, logger, undoStore, useStream, pullSteering, traceEnabled = true, traceDir = null, traceParentRunId = null, streamWatchdogMs = 300000, cwd = null, sessionId = null }) {
+  constructor({ api, visionApi = null, systemPrompt, tools, maxTurns = NORMAL_MAX_TURNS, onText, onReasoning, onToolUse, onToolArgsPreview, onToolProgress, onToolResult, onError, onPermissionRequest, onTodoUpdate, onUsage, onTurnEnd, onTurnLimitApproaching, beforeToolCall = null, logger, undoStore, useStream, pullSteering, traceEnabled = true, traceDir = null, traceParentRunId = null, streamWatchdogMs = 300000, cwd = null, sessionId = null }) {
     this.api = api
     // 【让 api 层的内部重试进 trace】
     // api.request() 自己会按 maxRetries 重试，但 trace 里只有 agent 记的那一条
@@ -110,6 +110,18 @@ export class Agent {
     // 是否正在 run —— resumeSubagent 用它判断「在跑就注入，别重开」
     this.isRunning = false
     this.hookManager = null  // 可选：由外部设置
+    /**
+     * 每次工具调用**之前**的回调（2026-10-06 加）。
+     *
+     * 用途：上下文自动压缩 —— 检查 token 占用，超阈值时先压缩再继续。
+     * 为什么放在 agent 层而不是 hook：hook 是**外部脚本**，只能
+     * 返回 DENY/INJECT，**没法真正执行压缩**（压缩要改 agent 的历史，
+     * 是进程内操作）。这里给一个进程内回调，能拿到 agent 实例直接操作。
+     *
+     * 签名：async (agent) => void（抛异常不影响工具执行）
+     * 由 index.mjs 注入（它持有 compactService）。
+     */
+    this.beforeToolCall = beforeToolCall
     this.undoStore = undoStore || null  // 可选：用于 group 撤销
     this.cwd = cwd || null
     this.sessionId = sessionId
@@ -356,9 +368,20 @@ export class Agent {
           // 可重试错误（502/503/429/timeout 等）
           if (retry >= 4) break  // 已达最大重试次数
           // 认证类换完 key 立刻重试，不必退避（不是限流，等待没有意义）
+          //
+          // 【2026-10-06 调整退避时长】用户反馈「网络断一次它就报了」——
+          // 实测 trace 里 fetch failed 确实重试了 4 次，但总等待只有
+          // 1+2+4+8 = 15 秒。手机网络抖动往往要更久才恢复（切 WiFi/基站
+          // 重连），15 秒不够。现在：
+          //   · 网络类错误（network / stream_broken / abort）用**更长**的
+          //     退避序列，总等待约 45 秒（3+6+12+24）
+          //   · 其他错误（5xx/429）保持原序列（服务端问题等太久没意义）
+          const isNetErr = ['network', 'stream_broken', 'abort', 'stream_timeout'].includes(classification.name)
           const backoff = classification.name === 'auth_key'
             ? 0
-            : Math.min(1000 * Math.pow(2, retry), 30000)
+            : isNetErr
+              ? Math.min(3000 * Math.pow(2, retry), 30000)
+              : Math.min(1000 * Math.pow(2, retry), 30000)
           this._traceEmit('retry_scheduled', { turn: this.turnCount, retry: retry + 1, backoff_ms: backoff, category: this._classifyError(e).name })
           await new Promise(r => setTimeout(r, backoff))
         }
@@ -845,7 +868,21 @@ export class Agent {
     } catch {}
   }
 
-  async _executeTool(block, earlyPromise, signal) {
+  async _executeTool(block, earlyPromise, signal, opts = {}) {
+    // 工具调用前的检查点（上下文自动压缩等）。
+    // 放在最前：压缩要改历史，越早做越安全（工具还没跑，没有半途状态）。
+    // 失败不拦工具（压缩是优化，不是前置条件）。
+    //
+    // ⚠️ **early 工具跳过**（opts.skipBeforeCall）—— 流式期间提前启动的
+    // 只读工具在**流还没结束**时就执行了；此时压缩会改 agent 历史，
+    // 而流解析/工具循环都在用那份历史 → 状态错乱。
+    // 这类工具的检查点由主循环（流结束后的正式执行）负责，或下一次
+    // 工具调用时补上（差一次工具调用的时间，安全）。
+    if (this.beforeToolCall && !opts.skipBeforeCall) {
+      try { await this.beforeToolCall(this) } catch (e) {
+        try { this._traceEmit('before_tool_call_error', { turn: this.turnCount, error: String(e?.message || e) }) } catch {}
+      }
+    }
     if (earlyPromise) return earlyPromise  // 复用流中提前执行的结果
     if (this._aborted || signal?.aborted) {
       const interrupted = { type: 'tool_result', tool_use_id: block.id, content: 'Interrupted', is_error: true }
@@ -1176,7 +1213,8 @@ export class Agent {
           this.onToolUse(block)
           // 用 earlyToolSignal 而不是 streamSignal：流正常结束时的连接清理
           // 不该杀掉仍在跑的工具（见上方 earlyToolController 注释）
-          const p = this._executeTool(block, undefined, earlyToolSignal)
+          // skipBeforeCall：early 工具在流未结束时执行，压缩会改历史 → 危险
+          const p = this._executeTool(block, undefined, earlyToolSignal, { skipBeforeCall: true })
           earlyInflight++
           // settle 后补摘：全部 early 工具跑完 → 若监听还保留着（在飞时保的），
           // 此刻才轮到摘。remove 幂等，与 finally 主摘路径不冲突。
@@ -1607,7 +1645,31 @@ export class Agent {
       }
     }
     const table = [
-      { name: 'stream_timeout', re: /Stream timeout/, retry: false, desc: '流级 watchdog 卡死，重试同一 stream 没意义' },
+      // 【2026-10-06 改 retry: true】原来判 false（"重试同一 stream 没意义"）——
+      // 那句话本身没错，但**结论错了**：我们不是重试"同一个 stream"，
+      // 而是**重发一次全新请求**（新连接、新流）。
+      //
+      // 为什么现在敢开：
+      //   · watchdog 是 **agent 层**的机制（api.mjs 不知道它的存在），
+      //     所以这条错误**没有被 api 层重试过** —— 不存在叠加。
+      //   · 用户实测体感：「五分钟不输出它就报错了」——
+      //     中转站/网络抖动导致的长时间无数据，重发一次往往就通了。
+      //   · 代价可控：重试前有退避，且 agent 层总重试次数仍受 maxRetries 约束。
+      { name: 'stream_timeout', re: /Stream timeout/, retry: true, desc: '流长时间无数据（watchdog），重发新请求' },
+      // 【2026-10-06 加】流**中途**网络中断 —— 用户体感「网络断一次它就报了」。
+      //
+      // 根因：createMessageStream 里，建连阶段走 request()（有重试），
+      // 但**流解析阶段**（parseOpenAIStream 的 reader.read()）抛错时
+      // 直接冒到 agent，中间没有任何重试。
+      //
+      // 这类错误的特征：reader.read() 在连接被掐断时抛 TypeError
+      // （"network error" / "terminated" / "other side closed" 等）。
+      // 上层看到的是**部分内容已收到**——重发会丢掉已收部分，
+      // 但比整轮失败好（用户可接受"重新生成"，不可接受"直接报错"）。
+      //
+      // ⚠️ 必须排在下面的 network 规则**之前**，否则会被它先命中
+      //（那条的 re 更宽），拿不到这条更精确的语义描述。
+      { name: 'stream_broken', re: /other side closed|stream.*(?:error|closed|terminated)|terminated.*(?:stream|response)|premature close|incomplete (?:chunked|message)/i, retry: true, desc: '流中途断开，重发新请求' },
       // fetch 层超时（api.mjs 的 `Request timeout after Nms`）：**不可重试**。
       //
       // 【为什么不重试 —— 2026-09-01 实测教训】

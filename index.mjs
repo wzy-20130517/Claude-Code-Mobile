@@ -1930,6 +1930,9 @@ async function main() {
   // 陪聊模式已移除：不再轮询收件箱主动搭话，QQ 只作为用户下达指令的输入通道。
   // 让模块级 recordError 能拿到当前 agent 历史长度，供 /retry 记录报错点
   globalThis.__agentRef = () => agent
+  /** 上次工具前自动压缩的时间戳（防抖：一次 run 几十个工具调用，不能每个都压） */
+  let _lastAutoCompactAt = 0
+
   agent = new Agent({
     api,
     visionApi,
@@ -1958,6 +1961,46 @@ async function main() {
     //（内容没变直接 return），所以高频调用不会打爆渲染。
     onUsage: () => {
       try { updateFsStatus() } catch {}
+    },
+    // ══════════════════════════════════════════════════════════════
+    //  工具调用前的上下文检查（2026-10-06 加）
+    // ══════════════════════════════════════════════════════════════
+    //
+    // 用户需求：「Agent 每次动作之前，检查上下文是否超过 600k，
+    // 如果超过了就执行 /compact 100 并继续工作」。
+    //
+    // 为什么放这里而不是 hook：hook 是外部脚本，只能返回 DENY/INJECT，
+    // **没法真正压缩**（压缩要改 agent 的历史，是进程内操作）。
+    //
+    // 触发条件（三个都要满足）：
+    //   1. 用户开了自动压缩（/compact-threshold 设了阈值）
+    //   2. 当前占用 > 阈值
+    //   3. 断路器没断（连续 3 次失败就停，见 autoCompact 内部）
+    //
+    // 用的是 autoCompact()（已含备份、策略选择、断路器），
+    // 不是硬编码「/compact 100」—— 那个参数只是保留尾部条数，
+    // 而 autoCompact 会按压力自动挑策略（micro 优先，零 API）。
+    beforeToolCall: async (ag) => {
+      try {
+        const tokens = ag.getLastPromptTokens?.() || 0
+        const limit = getTokenLimit()
+        // 没开自动压缩（limit=0）或没超阈值 → 不动
+        if (limit <= 0 || tokens <= limit) return
+        // 同一轮里刚压过就不再压（防抖：一次 run 有几十个工具调用）
+        const now = Date.now()
+        if (now - _lastAutoCompactAt < 30_000) return
+        _lastAutoCompactAt = now
+        const before = ag.getHistory().length
+        await autoCompact(ag, compactService, {
+          print: (text) => { try { emit(`${text}\n`) } catch {} },
+        })
+        const after = ag.getHistory().length
+        if (after !== before) {
+          try { updateFsStatus() } catch {}
+        }
+      } catch (e) {
+        crashLog('before-tool-compact', e)
+      }
     },
     onReasoning: (text) => {
       // 旧 run（被打断后残留）不再往当前渲染器写
