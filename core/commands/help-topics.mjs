@@ -227,6 +227,9 @@ Ctrl+G               删除当前翻到的排队消息（发错了不用干等�
       宿主未运行时自动拉起；源码在 ~/claude-code-mobile/dsh-host/
 /pexels   图库搜索 key（FindImage 用）
       set <key> / test / clear        test 会显示剩余额度
+/tvly     Tavily 搜索 key（WebSearch 用，key 形如 tvly-xxx）
+      /tvly <tvly-...> / clear        设置 / 清空；不带参数看当前状态
+      存 ~/.claude-code-mobile/.env；注册 https://app.tavily.com/
 /keepalive  息屏保活（on|off|auto on|auto off，自动保活默认开）
 /device   手机 Shell 通道 / 虚拟副屏 / 操作模式
       /device                    看总览（通道探测 + 副屏 + 模式）

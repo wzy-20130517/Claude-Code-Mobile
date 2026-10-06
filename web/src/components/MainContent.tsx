@@ -1855,7 +1855,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
   const [askUserDialog, setAskUserDialog] = useState<{
     request_id: string;
     tool_use_id: string;
-    questions: Array<{ question: string; header?: string; options?: Array<{ label: string; description?: string }>; multiSelect?: boolean }>;
+    questions: Array<{ question: string; header?: string; options?: Array<string | { label: string; description?: string }>; multiSelect?: boolean }>;
     answers: Record<string, string>;
   } | null>(null);
 
@@ -5287,38 +5287,46 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
               {askUserDialog.questions.map((q, qi) => (
                 <div key={qi} className="flex flex-col gap-1.5">
                   <label className="text-[13px] font-medium text-claude-text">{q.question}</label>
-                  {q.options && q.options.length > 0 ? (
+                  {/* 【2026-10-06 改：选项与输入框**并存**】
+                      原来是二选一（有选项就不给输入框）—— 用户只能从
+                      Agent 给的选项里挑，想补充说明或都不满意时无处可写。
+                      现在选项按钮照常点选（点了就填进输入框），
+                      输入框始终存在，可自由改写/补充。
+                      options 兼容两种形态：字符串数组（工具侧传的）与
+                      {label,description} 对象数组（老格式）。 */}
+                  {q.options && q.options.length > 0 && (
                     <div className="flex flex-col gap-1">
                       {q.options.map((opt, oi) => {
-                        const selected = askUserDialog.answers[q.question] === opt.label;
+                        const label = typeof opt === 'string' ? opt : opt.label;
+                        const desc = typeof opt === 'string' ? '' : (opt.description || '');
+                        const selected = askUserDialog.answers[q.question] === label;
                         return (
                           <button
                             key={oi}
-                            onClick={() => setAskUserDialog(prev => prev ? { ...prev, answers: { ...prev.answers, [q.question]: opt.label } } : null)}
+                            onClick={() => setAskUserDialog(prev => prev ? { ...prev, answers: { ...prev.answers, [q.question]: label } } : null)}
                             className={`text-left px-3 py-2 rounded-lg border text-[13px] transition-colors ${selected ? 'border-[#C6613F] bg-[#C6613F]/10 text-claude-text' : 'border-claude-border hover:bg-claude-hover text-claude-textSecondary'}`}
                           >
-                            <div className="font-medium text-claude-text">{opt.label}</div>
-                            {opt.description && <div className="text-[12px] text-claude-textSecondary mt-0.5">{opt.description}</div>}
+                            <div className="font-medium text-claude-text">{label}</div>
+                            {desc && <div className="text-[12px] text-claude-textSecondary mt-0.5">{desc}</div>}
                           </button>
                         );
                       })}
                     </div>
-                  ) : (
-                    <input
-                      type="text"
-                      className="w-full bg-claude-input border border-claude-border rounded-lg px-3 py-2 text-[13px] text-claude-text outline-none focus:border-claude-textSecondary/40 transition-colors"
-                      placeholder="输入你的回答…"
-                      value={askUserDialog.answers[q.question] || ''}
-                      onChange={e => setAskUserDialog(prev => prev ? { ...prev, answers: { ...prev.answers, [q.question]: e.target.value } } : null)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          document.getElementById('ask-user-submit-btn')?.click();
-                        }
-                      }}
-                      autoFocus={qi === 0}
-                    />
                   )}
+                  <input
+                    type="text"
+                    className="w-full bg-claude-input border border-claude-border rounded-lg px-3 py-2 text-[13px] text-claude-text outline-none focus:border-claude-textSecondary/40 transition-colors"
+                    placeholder={q.options && q.options.length > 0 ? '或直接输入你的回答…' : '输入你的回答…'}
+                    value={askUserDialog.answers[q.question] || ''}
+                    onChange={e => setAskUserDialog(prev => prev ? { ...prev, answers: { ...prev.answers, [q.question]: e.target.value } } : null)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        document.getElementById('ask-user-submit-btn')?.click();
+                      }
+                    }}
+                    autoFocus={qi === 0}
+                  />
                 </div>
               ))}
             </div>

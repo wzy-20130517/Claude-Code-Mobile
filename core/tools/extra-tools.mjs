@@ -205,8 +205,26 @@ function isBlockedHost(hostname) {
 export class AskUserSimpleTool extends Tool {
   constructor(onAsk) {
     super({
-      name: 'AskUserQuestion', description: '向用户问一个简短问题',
-      input_schema: { type: 'object', properties: { question: { type: 'string' } }, required: ['question'] },
+      name: 'AskUserQuestion',
+      description: '向用户提问获取信息。\n' +
+        '可以给选项（options，最多 4 个）—— 用户按编号选，也能自己打字（选项外补充说明）。\n' +
+        '不给 options 就是纯文本提问。\n' +
+        '⚠️ 子 Agent 不要调用 —— 无法与用户交互，会一直阻塞。',
+      input_schema: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: '要问的问题' },
+          // 【2026-10-06 加】与 APK 端对齐：CLI 原来只有纯文本提问，
+          // 用户必须打字；APK 有选项按钮但没有输入框。两端各缺一半，
+          // 现在 CLI 也支持选项（复用 slash 向导的选项 UI 渲染）。
+          options: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '可选：预设选项（最多 4 个）。给了就按编号列出，用户输编号选，也可自由输入。',
+          },
+        },
+        required: ['question'],
+      },
       maxResultSizeChars: 5000,
       validateInput: (input) => {
         const errors = []
@@ -216,5 +234,13 @@ export class AskUserSimpleTool extends Tool {
     })
     this.onAsk = onAsk
   }
-  async execute(input) { const a = await this.onAsk(input.question); return a || '(no answer)' }
+  async execute(input) {
+    const opts = Array.isArray(input.options)
+      ? input.options.map(String).filter(Boolean).slice(0, 4)
+      : []
+    // onAsk 第二个参数是选项（旧实现只传 question —— 保持向后兼容，
+    // 老的 askUser 忽略第二个参数即可）
+    const a = await this.onAsk(input.question, opts)
+    return a || '(no answer)'
+  }
 }

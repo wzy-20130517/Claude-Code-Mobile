@@ -5231,8 +5231,12 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
 
 
   // askUser：用主 rl 临时接管，避免 stdin 冲突
+  //
+  // 【2026-10-06 加 options】对齐 APK 端：有选项时列出来，用户输编号即可，
+  // 也能自由输入（选项外补充说明）。渲染复用 slash 向导的样式（❯ / 编号 / ·）。
   let askResolve = null
-  async function askUser(question) {
+  async function askUser(question, options = []) {
+    const opts = Array.isArray(options) ? options.filter(Boolean).slice(0, 4) : []
     return new Promise(resolve => {
       askResolve = resolve
       // 暂停主 onEnter
@@ -5241,12 +5245,26 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
         rl.onEnter = prevOnEnter
         rl.reset()
         rl.setPrompt(promptStr)
-        const ans = (line || '').trim()
+        let ans = (line || '').trim()
+        // 纯数字 → 映射成选项（与向导的「输入编号选」同规则）
+        if (opts.length && /^\d+$/.test(ans)) {
+          const pick = opts[parseInt(ans, 10) - 1]
+          if (pick !== undefined) ans = pick
+        }
         askResolve = null
         resolve(ans || '(no answer)')
       }
-      // printAbove 打印问题，然后显示一个提示符
+      // printAbove 打印问题（+ 选项列表），然后显示一个提示符
       rl.printAbove(`${C.claude}${question}${C.reset}`)
+      if (opts.length) {
+        const dim = C?.dim || '\x1b[2m'
+        const reset = C?.reset || '\x1b[0m'
+        const green = C?.green || '\x1b[32m'
+        opts.forEach((op, i) => {
+          rl.printAbove(`${dim}  ${green}${i + 1})${reset} ${op}`)
+        })
+        rl.printAbove(`${dim}  （输编号选，或直接打字回答）${reset}`)
+      }
       rl.setPrompt('> ')
       rl.reset()
       process.stdout.write('> ')

@@ -12,6 +12,9 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { MCP_PATH } from '../infra/paths.mjs'
+// /tvly 用：读取走 getTavilyKey（与 WebSearch 实际那条取值链同一实现），
+// 写完必须 resetTavilyKeyCache —— 模块级 cachedKey 不会因为文件变了自己失效。
+import { getTavilyKey, resetTavilyKeyCache } from '../tools/tavily.mjs'
 
 /**
  * @param {object} ctx
@@ -26,6 +29,23 @@ export function makeIntegrationCommands(ctx) {
   const readEnv = () => {
     try { return readFileSync(ENV_PATH, 'utf-8') } catch { return '' }
   }
+  const writeTavilyKey = (k) => {
+    const txt = readEnv()
+    const lines = txt.split('\n').filter((l) => l && !/^TAVILY_API_KEY=/.test(l))
+    lines.push(`TAVILY_API_KEY=${k}`)
+    try { mkdirSync(join(homedir(), '.claude-code-mobile'), { recursive: true }) } catch {}
+    writeFileSync(ENV_PATH, lines.join('\n') + '\n', { encoding: 'utf-8', mode: 0o600 })
+    process.env.TAVILY_API_KEY = k   // 当前进程立即生效
+    resetTavilyKeyCache()             // WebSearch 的模块级缓存一起失效
+  }
+  const clearTavilyKey = () => {
+    const txt = readEnv()
+    const lines = txt.split('\n').filter((l) => l && !/^TAVILY_API_KEY=/.test(l))
+    try { writeFileSync(ENV_PATH, lines.join('\n') + '\n', { encoding: 'utf-8', mode: 0o600 }) } catch {}
+    delete process.env.TAVILY_API_KEY
+    resetTavilyKeyCache()
+  }
+
   const writePexelsKey = (k) => {
     const txt = readEnv()
     const lines = txt.split('\n').filter((l) => l && !/^PEXELS_API_KEY=/.test(l))
@@ -36,6 +56,42 @@ export function makeIntegrationCommands(ctx) {
   }
 
   return {
+    /**
+     * /tvly — Tavily 搜索 key（WebSearch 用；存 ~/.claude-code-mobile/.env）
+     *
+     * 【为什么存 .env 不存 config.json】
+     * config.json 的 saveConfig 是白名单序列化（index.mjs），登记新字段
+     * 很容易漏 —— 漏了就是「设完下次任何 saveConfig 又没了」的老坑。
+     * .env 与 /pexels 同一条路：CLI / Web 两个进程读同一份文件，
+     * 且 getTavilyKey 的取值链第一优先就是它，写完立即生效。
+     *
+     * key 形如 tvly-xxxxxxxx（Tavily 官方前缀）。
+     */
+    async tvly(args) {
+      const { maskKey } = ctx
+      const sub = String(args[0] || '').toLowerCase()
+
+      if (!sub || sub === 'status') {
+        const cur = getTavilyKey()
+        return `Tavily（WebSearch 联网搜索）:\n`
+          + `- Key: ${cur ? maskKey(cur) : '未配置'}\n`
+          + `- 存储: ${ENV_PATH}\n`
+          + `- key 格式: \`tvly-xxxxxxxx\`\n`
+          + `用法: /tvly <tvly-...> 设置 · /tvly clear 清空\n`
+          + `注册拿 key: https://app.tavily.com/`
+      }
+      if (sub === 'clear') {
+        clearTavilyKey()
+        return 'Tavily key 已清空（WebSearch 会提示「未配置」）'
+      }
+      // 支持 /tvly <key> 和 /tvly set <key>（两种写法等价）
+      const parts = sub === 'set' ? args.slice(1) : args
+      const key = String(parts.join(' ') || '').trim()
+      if (!key) return '用法: /tvly <tvly-...> 或 /tvly set <tvly-...>'
+      writeTavilyKey(key)
+      return `Tavily key 已设置（${maskKey(key)}）· 本端立即生效\n`
+        + `注意：CLI 与 Web 是两个进程，另一端重启后生效（与 /pexels 同）`
+    },
     /** /pexels — FindImage 用的图库 key（存 ~/.claude-code-mobile/.env） */
     async pexels(args) {
       const { maskKey } = ctx

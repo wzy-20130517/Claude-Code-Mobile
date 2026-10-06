@@ -205,7 +205,7 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
   - 维护类：\`/compact\` \`/compact-threshold\` \`/compact-trash\` \`/trash\` \`/mem\` \`/memory\` \`/automem\` \`/skills\` \`/plugins\` \`/hooks\` \`/permissions\` \`/web\` \`/x11\` \`/check\` \`/review\` \`/workflow\` \`/retry\` \`/context7\`
   - 界面类：\`/board\` \`/keys\` \`/btw\` \`/deep\` \`/plan\` \`/watch\` \`/goal\` \`/coordinate\`（Web: \`/cowork\`）\`/me\` \`/palette\` \`/editor\` \`/exit\` \`/quit\`
   - 集成类：\`/context7\`（Context7 MCP：setup/enable/disable/status）、\`/x11\`（浏览器是否拉起 Termux:X11）、\`/update\`（见下）
-  - 配置类：\`/config\` \`/model\` \`/url\` \`/key\` \`/name\` \`/protocol\` \`/effort\` \`/cache\` \`/voice\` \`/statusline\` \`/font\` \`/markdown\` \`/style\` \`/greeting\` \`/keepalive\` \`/imagegen\` \`/mail\` \`/mcp\` \`/pexels\` \`/github\` \`/qq\`
+  - 配置类：\`/config\` \`/model\` \`/url\` \`/key\` \`/name\` \`/protocol\` \`/effort\` \`/cache\` \`/voice\` \`/statusline\` \`/font\` \`/markdown\` \`/style\` \`/greeting\` \`/keepalive\` \`/imagegen\` \`/mail\` \`/mcp\` \`/pexels\` \`/tvly\` \`/github\` \`/qq\`
   - 手机类：\`/device\`（Shell 通道 + 虚拟副屏 + 手机操作模式，见下）
   - 文件与输入类：\`/copy\` \`/image <路径> [说明]\` \`/add-dir <路径>\` \`/workspace [路径]\`
   - \`/anti-ai-slop\`、\`/termux-video\` 等是 skill 命令，不是内置命令；skill 清单见下方“可用 Skills”。
@@ -225,7 +225,10 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
   \`/mcp enable|disable <名字>\`（disable 立即停进程；enable 需 Ctrl+X 重启，因为工具适配器是启动时一次性注册的）。
   改的是 mcp.json 的 disabled 字段。注意 MCP **工具**不做成 slash 命令，它们走 mcp_<server>_<tool> 工具通道。
 - **/pexels**：管理 FindImage 用的图库 key。\`/pexels\` 看状态、\`set <key>\` 配置（写 ~/.claude-code-mobile/.env，当前会话立即生效）、
-  \`test\` 测连通性和剩余额度、\`clear\` 清空。免费额度 200 次/小时、20000 次/月。
+  \`test\` 测连通性和剩余额度、\`clear\` 清空。
+  免费额度 200 次/小时、20000 次/月。
+- **/tvly**：管理 WebSearch 用的 Tavily 搜索 key（key 形如 \`tvly-xxxxxxxx\`）。\`/tvly <tvly-...>\` 设置（写 ~/.claude-code-mobile/.env，当前进程立即生效；CLI 与 Web 是两个进程，另一端重启后生效）、
+  \`/tvly\` 看当前状态、\`/tvly clear\` 清空。注册拿 key: https://app.tavily.com/
 - **/plugin**（2026-10-04 加，对齐官方 Claude Code 的 /plugin）：管理**插件**。
   **/plugins 是它的别名**（官方 \`aliases: ['plugins','marketplace']\` 同款做法），
   旧的内置插件系统（core/plugins.mjs）已废弃。

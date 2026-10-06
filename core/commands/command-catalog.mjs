@@ -41,7 +41,7 @@ export const BUILTIN_COMMANDS = [
   'clear-restore', 'config', 'trash', 'keepalive', 'palette', 'web', 'greeting', 'board', 'keys',
   'btw', 'files', 'status', 'summary', 'statusline', 'mem', 'font', 'check', 'plugins', 'x11',
   'hooks', 'tools', 'errors', 'away', 'temperature', 'imagegen', 'mail', 'effort', 'style', 'me',
-  'github', 'voice', 'mcp', 'pexels', 'markdown', 'device', 'update', 'replay', 'plugin',
+  'github', 'voice', 'mcp', 'pexels', 'tvly', 'markdown', 'device', 'update', 'replay', 'plugin',
 ]
 
 /** 内置命令名集合（O(1) 查询用）。 */
@@ -60,6 +60,7 @@ export const COMMAND_DESCRIPTIONS = {
   help: '帮助（输 /help 空格看各主题）',
   mcp: 'MCP 服务器：list/status/enable/disable/tools',
   pexels: '图库搜索 key（FindImage 用）：set/test/clear',
+  tvly: 'Tavily 搜索 key（WebSearch 用）：tvly-xxx / clear',
   cost: 'token 用量与花费',
   cache: 'Prompt Cache 开关：/cache on|off|retention 24h',
   context: '上下文占用与上限',
@@ -183,6 +184,7 @@ export const ARG_HINTS = {
   trash: '[restore <序号>|clear]',
   voice: '[on|off|<音色>|rate <+10%>]',
   qq: '[on|off|setup|…]', mail: '[status|set|…]',
+  tvly: '<tvly-...>|clear',
   imagegen: '[setup|url|key|…]', memory: '[init|append <内容>]',
   image: '<图片路径> [说明]', watch: '[on|off]', greeting: '[on|off]',
   // 9 个子命令用 | 挤一行，在 40-60 列窄屏上会被直接截断 —— 尾部的

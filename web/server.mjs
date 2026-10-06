@@ -2367,10 +2367,13 @@ async function buildAgent(runtime) {
   const api = new ApiClient({ baseUrl: provider.url, apiKey: provider.apiKey, apiKeys: provider.apiKeys, model: activeModel || provider.model, protocol: provider.protocol || 'openai', temperature: Number(provider.temperature) || 1, maxOutputTokens: provider.maxOutputTokens || null, thinkingConfig: thinkingConfigForRuntime(runtime, config), systemTopLevel: !!provider.systemTopLevel })
   const isolatedTools = new Set(['Restart', 'Screencap'])
   const canRunWebTool = async (tool) => !isolatedTools.has(tool?.name || tool)
-  const askUser = (question) => new Promise(resolve => {
+  // 【2026-10-06 加 options】前端弹窗支持选项按钮 + 自由输入框
+  // （options 原来硬编码空数组 —— 前端拿不到选项，只能打字）。
+  const askUser = (question, options = []) => new Promise(resolve => {
     const requestId = randomUUID()
     runtime.pendingQuestions.set(requestId, resolve)
-    emit(runtime, 'ask_user', { request_id: requestId, tool_use_id: requestId, questions: [{ question: String(question || ''), options: [] }] })
+    const opts = Array.isArray(options) ? options.filter(Boolean).slice(0, 4) : []
+    emit(runtime, 'ask_user', { request_id: requestId, tool_use_id: requestId, questions: [{ question: String(question || ''), options: opts }] })
   })
 
   // 手机操作模式的向导 —— 首次用 phone 工具时弹，让用户自己选。
