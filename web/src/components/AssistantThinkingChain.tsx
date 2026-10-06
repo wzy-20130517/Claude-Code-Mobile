@@ -186,32 +186,62 @@ const tokenizeStreamingLabel = (text: string) =>
 
 function useAnimatedStatusLabel(label: string, isThinking: boolean) {
   const [animatedStatusText, setAnimatedStatusText] = useState(label);
+  // 【2026-10-06 用户报「思维链一闪一闪」修复】
+  //
+  // 原来 useEffect 依赖 [isThinking, label] —— isThinking 一变就**重启打字机**
+  // （setAnimatedStatusText(tokens[0]) 回到第一个词，再逐字打出）。
+  // 而流式期间 isThinking 频繁翻转（每个思考段/工具调用切换都变）→ 反复闪。
+  //
+  // 修法：打字机**只跟 label 绑定**。用 ref 记住「这个词组播到哪了」，
+  // isThinking 变化不再重置；label 真的变了才重头播。
+  const playedRef = useRef<{ label: string; count: number }>({ label: '', count: 0 });
 
   useEffect(() => {
     const normalizedLabel = label.trim() || THINKING_STATUS_FALLBACK;
+    const tokens = tokenizeStreamingLabel(normalizedLabel);
 
-    if (!isThinking) {
+    if (tokens.length === 0) {
+      setAnimatedStatusText(THINKING_STATUS_FALLBACK);
+      playedRef.current = { label: normalizedLabel, count: 0 };
+      return;
+    }
+
+    // 同一个 label 且已经播完 → 直接显示全文，不重播（这是防闪的关键）
+    if (playedRef.current.label === normalizedLabel &&
+        playedRef.current.count >= tokens.length) {
       setAnimatedStatusText(normalizedLabel);
       return;
     }
 
-    const tokens = tokenizeStreamingLabel(normalizedLabel);
-    if (tokens.length === 0) {
-      setAnimatedStatusText(THINKING_STATUS_FALLBACK);
-      return;
+    // 新 label → 从头播
+    if (playedRef.current.label !== normalizedLabel) {
+      playedRef.current = { label: normalizedLabel, count: 0 };
     }
 
-    setAnimatedStatusText(tokens[0]);
-    let visibleTokenCount = 1;
+    // 从未播过（count=0）→ 从第 1 个词开始；否则从上次的位置续播
+    let visibleTokenCount = Math.max(1, playedRef.current.count);
+    setAnimatedStatusText(tokens.slice(0, visibleTokenCount).join(''));
+    playedRef.current.count = visibleTokenCount;
+
     const timer = window.setInterval(() => {
       visibleTokenCount += 1;
       setAnimatedStatusText(tokens.slice(0, visibleTokenCount).join(''));
+      playedRef.current.count = visibleTokenCount;
       if (visibleTokenCount >= tokens.length) {
         window.clearInterval(timer);
       }
     }, 42);
 
     return () => window.clearInterval(timer);
+  }, [label]);   // ← 不再依赖 isThinking
+
+  // isThinking 变 false 时补一次「显示全文」（不重播）
+  useEffect(() => {
+    if (!isThinking) {
+      const normalizedLabel = label.trim() || THINKING_STATUS_FALLBACK;
+      setAnimatedStatusText(normalizedLabel);
+      playedRef.current = { label: normalizedLabel, count: 999999 };
+    }
   }, [isThinking, label]);
 
   return animatedStatusText;
