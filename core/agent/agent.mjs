@@ -404,6 +404,7 @@ export class Agent {
         const cacheWrite = [usage.cache_creation_input_tokens, usage.prompt_cache_write_tokens]
           .find((v) => typeof v === 'number' && v > 0) || 0
         this.lastPromptTokens = promptTokens || this.lastPromptTokens
+        this._approxPromptTokens = false   // 真实值回来了，清掉估算标记
         this.lastUsage = { promptTokens:this.lastPromptTokens, completionTokens, cacheRead, cacheWrite }
         this.tokenUsage.output += completionTokens
         this.tokenUsage.input += promptTokens
@@ -1647,7 +1648,16 @@ export class Agent {
   }
 
   addUserMessage(t) { this.messages.push({ role: 'user', content: t }) }
-  clear() { this.messages = []; this.turnCount = 0 }
+  clear() {
+    this.messages = []
+    this.turnCount = 0
+    // 【2026-10-06 同批修】清空历史后必须重置占用计数 —— 否则水位判定
+    // 还读着清空前的大数字 → 新对话第一条消息就被拦（与 /compact 那个
+    // 死循环同源）。清空后占用就是系统提示词那点量，置 0 让判定走
+    // 「无数据 → ok」分支，等首次请求后自然填真实值。
+    this.lastPromptTokens = 0
+    this._approxPromptTokens = false
+  }
 
   /**
    * 清零「本次任务」的耗时指标（每次 run 开始调用）。
@@ -1764,9 +1774,83 @@ export class Agent {
     }
   }
   getHistory() { return this.messages }
-  setHistory(m) { this.messages = m }
+  /**
+   * 替换历史（/compact /clear /resume /rewind /branch 都会调）。
+   *
+   * 【2026-10-06 修死循环】这里**自动重估** lastPromptTokens ——
+   * 原来的问题是：这些命令改了历史，但占用计数还是上一次 API 的旧值
+   * （压缩前的大数字）→ 下次水位判定 → blocking → 请求发不出去 →
+   * 值永远不更新。用户现象：「明明刚 compact 过，还是被拦」。
+   *
+   * 放在这里而不是每个命令里各调一次：**一处覆盖全部调用点**，
+   * 以后新增改历史的命令也不会漏。估算用 4 字符 ≈ 1 token（与
+   * CompactService 同口径），下次真实请求成功后会被准确值替换。
+   */
+  setHistory(m) {
+    this.messages = Array.isArray(m) ? m : []
+    try {
+      const est = this._estimateHistoryTokens()
+      if (est > 0) {
+        this.lastPromptTokens = est
+        this._approxPromptTokens = true
+      }
+    } catch { /* 估算失败不影响设历史本身 */ }
+  }
+
+  /**
+   * 按当前历史粗估 token 数（4 字符 ≈ 1 token）。
+   * 含 system prompt（它也是请求的一部分，不算会低估）。
+   */
+  _estimateHistoryTokens() {
+    let chars = 0
+    for (const msg of this.messages) {
+      if (typeof msg?.content === 'string') chars += msg.content.length
+      else if (Array.isArray(msg?.content)) {
+        for (const part of msg.content) {
+          if (typeof part?.text === 'string') chars += part.text.length
+        }
+      }
+    }
+    // system prompt 是请求的一部分 —— 只算历史会系统性低估
+    const sp = typeof this.systemPrompt === 'string' ? this.systemPrompt.length : 0
+    return Math.ceil((chars + sp) / 4)
+  }
   getTokenUsage() { return this.tokenUsage }
   getLastPromptTokens() { return this.lastPromptTokens }
+
+  /**
+   * 历史被外部改动（/compact、/clear、/rewind）后，**重估**上下文占用。
+   *
+   * ══════════════════════════════════════════════════════════════
+   *  要堵的死循环（2026-10-06 用户实测踩到）
+   * ══════════════════════════════════════════════════════════════
+   *
+   * ```
+   * 1. lastPromptTokens 是上一次 API 返回的 prompt_tokens（压缩前的大数字）
+   * 2. /compact 压缩了历史，但这个值**没更新**
+   * 3. 下次发消息 → 水位判定读旧值 → remain < 13K → blocking → 拒发
+   * 4. 请求发不出去 → 值永远不更新 → 死循环
+   * ```
+   *
+   * 用户现象：「context-blocking: 上下文已满，请先 /compact 再发消息」
+   * —— 明明刚 compact 过，还是被拦。
+   *
+   * 修法：压缩后按**当前历史**做本地粗估（4 字符 ≈ 1 token，与
+   * Compactor 的估算口径一致），覆盖 lastPromptTokens。
+   * 这是**近似值**，下一次真实请求成功后会被准确值替换。
+   *
+   * @param {number} approxTokens 估算的当前上下文 token 数
+   */
+  setApproxPromptTokens(approxTokens) {
+    const n = Math.max(0, Math.floor(Number(approxTokens) || 0))
+    if (n > 0) {
+      this.lastPromptTokens = n
+      this._approxPromptTokens = true   // 标记：这是估算值，非真实 usage
+    }
+  }
+
+  /** 当前占用是否为估算值（供 /context 显示 ~ 前缀） */
+  isApproxPromptTokens() { return !!this._approxPromptTokens }
   getLastUsage() { return this.lastUsage }
   getLastTraceId() { return this.lastTraceId || null }
 }

@@ -33,6 +33,28 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
  *   newCompactAbort      () => AbortController（同时存进 index.mjs 的 let）
  *   clearCompactAbort    () => void，把那个 let 置 null
  */
+/**
+ * 压缩后重估上下文占用（2026-10-06 修「压缩后仍被拦」死循环）。
+ *
+ * 【为什么必须做】lastPromptTokens 只在 API 请求返回后更新。压缩改了
+ * 历史但没更新它 → 下次水位判定读旧值（压缩前的大数字）→ blocking →
+ * 请求发不出去 → 值永远不更新。用户看到「明明刚 compact 过还是被拦」。
+ *
+ * 用 CompactService 的 _estimateTokens（与压缩自身的口径一致），
+ * 4 字符 ≈ 1 token。这是近似值，下一次真实请求成功后会被准确值替换。
+ *
+ * @param ctx makeCompactCommand 的 ctx（用 agent + compactService）
+ * @param messages 压缩后的新历史
+ */
+function reestimateAfterCompact(ctx, messages) {
+  try {
+    const est = ctx.compactService._estimateTokens?.(messages)
+    if (typeof est === 'number' && est > 0) {
+      ctx.agent.setApproxPromptTokens?.(est)
+    }
+  } catch { /* 估算失败不影响压缩本身 */ }
+}
+
 export function makeCompactCommand(ctx) {
   return {
     async compact(args) {
@@ -53,6 +75,7 @@ export function makeCompactCommand(ctx) {
             return `[预览] 将回收 ${r.changed} 条工具输出，释放 ~${r.reclaimedTokens} tokens:\n${top}${r.details.length > 5 ? `\n  ...共 ${r.details.length} 条` : ''}\n去掉 dry 参数执行`
           }
           ctx.agent.setHistory(r.messages)
+          reestimateAfterCompact(ctx, r.messages)   // ★ 压缩后重估（防死循环）
           ctx.saveSession()
           const top = r.details.slice(0, 5).map(d => `  ${d.tool}: ${d.before} → ${d.after}`).join('\n')
           return `micro 压缩完成: 回收 ${r.changed} 条工具输出，释放 ~${r.reclaimedTokens} tokens（零 API 调用）\n${top}${r.details.length > 5 ? `\n  ...共 ${r.details.length} 条` : ''}`
@@ -71,6 +94,7 @@ export function makeCompactCommand(ctx) {
           let microNote = ''
           if (m.changed) {
             ctx.agent.setHistory(m.messages)
+            reestimateAfterCompact(ctx, m.messages)   // ★ 压缩后重估
             ctx.saveSession()
             microNote = `已回收 ${m.changed} 条工具输出（~${m.reclaimedTokens} tokens，无损）`
           }
@@ -97,6 +121,7 @@ export function makeCompactCommand(ctx) {
           if (r2.compacted) {
             const bak = ctx.backupBeforeCompact(histNow, { sessionId: ctx.sessionId(), reason: 'auto-pick', meta: { keepLast, strategy: r2.strategy } })
             ctx.agent.setHistory(r2.messages)
+            reestimateAfterCompact(ctx, r2.messages)   // ★ 压缩后重估
             const lines = [`压缩完成：${r2.messages.filter(x => x.role !== 'system').length} 条消息，保留最后 ${keepLast} 条`]
             if (microNote) lines.push(microNote)
             lines.push(`已生成历史摘要 (${r2.strategy})`, `完整会话备份: ${bak}`)
@@ -120,6 +145,7 @@ export function makeCompactCommand(ctx) {
         if (result.compacted) {
           const backupName = ctx.backupBeforeCompact(historyBefore, { sessionId: ctx.sessionId(), reason: 'manual', meta: { keepLast, strategy: result.strategy } })
           ctx.agent.setHistory(result.messages)
+          reestimateAfterCompact(ctx, result.messages)   // ★ 压缩后重估
           return `压缩完成：${result.messages.filter(m => m.role !== 'system').length} 条消息，保留最后 ${keepLast} 条 (${result.strategy})\n`
             + `(完整会话已备份到压缩回收站: ${backupName})`
             + formatSummary(result.summary)

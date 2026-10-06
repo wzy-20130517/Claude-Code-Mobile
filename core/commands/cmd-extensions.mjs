@@ -72,7 +72,11 @@ export function cmdContext(agent, maxContextTokens = null) {
   // 兜底估算：重启恢复会话后 lastPromptTokens 还是 0（要等下一次请求才有值），
   // 此时直接显示 0 会让人以为上下文空了。按历史内容长度粗估一个值，标注 ~ 表示估算。
   let curTokens = lastPrompt || 0
-  let estimated = false
+  // 【2026-10-06】估算值的两个来源要区分开：
+  //   · agent.isApproxPromptTokens() = true → setHistory 后按 4 字符/token 重估的
+  //     （压缩/清空/回退后），这个值**已经算过**，直接用
+  //   · lastPromptTokens == 0 → 重启恢复后还没发过请求，这里现算一个
+  let estimated = agent.isApproxPromptTokens?.() === true
   if (!curTokens && msgCount > 0) {
     let chars = 0
     for (const m of history) {
