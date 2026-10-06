@@ -12,7 +12,9 @@ interface TodoPanelProps {
 }
 
 const TodoPanel: React.FC<TodoPanelProps> = ({ todos, running }) => {
-  const [collapsed, setCollapsed] = useState(false);
+  // 【2026-10-06「看板太挡」】默认折叠 —— 浮层默认展开会盖住右下角正文；
+  // 折叠后只剩一行头部（进度 + chevron），底部「正在进行」状态条不受影响。
+  const [collapsed, setCollapsed] = useState(true);
 
   const stats = useMemo(() => {
     const total = todos.length;
@@ -26,7 +28,12 @@ const TodoPanel: React.FC<TodoPanelProps> = ({ todos, running }) => {
   const progress = stats.total ? Math.round((stats.done / stats.total) * 100) : 0;
 
   return (
-    <div className="fixed bottom-[150px] right-6 z-[95] w-[300px] overflow-hidden rounded-2xl border border-claude-border bg-claude-bg/95 shadow-xl backdrop-blur">
+    // 【2026-10-06 定稿】常驻条（不再是浮层）：
+    //   · fixed 浮层 → 开不开都盖正文（用户否）
+    //   · 进消息流文档流 → 滚上去就不常驻（用户否）
+    //   · 现在：content area 的 flex 第一子元素，消息滚动区 flex-1 让位 ——
+    //     一直看得见、不遮挡任何内容。默认折叠只占一行。
+    <div className="w-full overflow-hidden border-b border-claude-border bg-claude-bg">
       <button
         type="button"
         onClick={() => setCollapsed(value => !value)}

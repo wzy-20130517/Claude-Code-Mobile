@@ -4977,10 +4977,14 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
   // MODE 2: Chat Interface (Has ID or Messages)
   return (
     <div className="flex-1 bg-claude-bg h-full flex flex-col overflow-clip text-claude-text chat-root chat-font-scope">
-      {/* Content area - positioning container for scroll + bottom bars */}
-      <div className="flex-1 min-h-0 relative">
+      {/* Content area - positioning container for scroll + bottom bars
+          【2026-10-06 看板定稿】改为 flex-col：第一项是常驻 TodoPanel 条，
+          滚动区从 absolute inset-0 改成 flex-1 —— 看板占的高度由滚动区让出，
+          既常驻又不遮挡（浮层方案盖正文、进文档流方案不常驻，都不行）。 */}
+      <div className="flex-1 min-h-0 relative flex flex-col">
+        <TodoPanel todos={todoItems} running={loading} />
         <div
-          className="absolute inset-0 overflow-y-auto chat-scroll"
+          className="flex-1 min-h-0 overflow-y-auto chat-scroll"
           style={{ paddingBottom: `${inputHeight}px` }}
           ref={scrollContainerRef}
           onScroll={handleScroll}
@@ -5256,8 +5260,6 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
         </div>
       )}
 
-      {/* Todo 面板 */}
-      <TodoPanel todos={todoItems} running={loading} />
 
       {/* Active tasks progress */}
       {activeTasks.size > 0 && (
