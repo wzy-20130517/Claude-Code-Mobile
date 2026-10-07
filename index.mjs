@@ -306,6 +306,9 @@ function recordError(kind, err) {
 }
 // 报错点：{historyLen, errText, kind, at}；供 /retry 命令使用
 let retryPoint = null
+// 上次打过字的水位级别（warning/error 提示去重 —— 同级只打一次，
+// 升级才再打，否则 33K→13K 之间每轮刷一行黄字）
+let lastWaterLevel = 'ok'
 
 // 【已删除 2026-10-03】重启笔记（last-restart.txt）机制：
 // 原来重启前把原因 + 未完成待办写盘，新进程读入后注入给 AI（并在 REPL 就绪时自动开跑）。
@@ -6265,7 +6268,10 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
           const e = new Error('上下文已满，请先 /compact 再发消息')
           e.isContextBlocking = true
           recordError('context-blocking', e)
-          emit()
+          // 【2026-10-07 补】红字要在屏幕上 —— 原来只 recordError（进 /errors
+          // 列表），终端静默弹回提示符，用户以为「什么都没返回」。
+          const remainK = Math.max(0, Math.round((water.remain ?? 0) / 1000))
+          emit(`${C.red}✗ 上下文已满（剩约 ${remainK}K），这次没有发给模型 —— 请先 /compact 再发消息${C.reset}\n\n`)
           updateFsSpinner({ active: false, mode: 'idle' })
           processing = false
           abortController = null
@@ -6276,7 +6282,20 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
           return
         }
         if (water.level === 'error' || water.level === 'warning') {
-          emit()
+          // 【2026-10-07 补】原来只 emit()（空 flush），注释承诺的黄字
+          // 从来没写 —— 接近上限时用户看不到任何提示，直到剩 13K 被
+          // 静默拒发。现在按水位打黄/红字（仍不阻塞，用户自己决定）。
+          // 同级去重：升级（warning→error）才再打，压回 ok 后恢复。
+          if (water.level !== lastWaterLevel) {
+            const remainK = Math.max(0, Math.round((water.remain ?? 0) / 1000))
+            const msg = water.level === 'error'
+              ? `⚠ 上下文剩约 ${remainK}K —— 快到硬上限了，建议 /compact`
+              : `· 上下文剩约 ${remainK}K —— 接近上限时可以 /compact`
+            emit(`${C.yellow}${msg}${C.reset}\n`)
+          }
+          lastWaterLevel = water.level
+        } else if (water.level === 'ok') {
+          lastWaterLevel = 'ok'
         }
       } catch {}
 

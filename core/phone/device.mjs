@@ -348,7 +348,11 @@ const VD_PKG = 'ccm-vd'
 
 /** 本地 dex 路径（构建产物）。 */
 export function vdDexPath() {
-  return join(dirname(fileURLToPath(import.meta.url)), '..', 'tools', 'vd', 'build', VD_DEX_NAME)
+  // 【2026-10-07 修】本文件在 core/phone/ 下，只上一级 '..' 解析到
+  // core/tools/vd/build —— 但 build.sh 的产物在**仓库根**的 tools/vd/build
+  // （build.sh 的 OUT=dirname 自己/build）。两个路径对不上，副屏永远
+  // 报「dex 不存在，先编译」（编译了也没用）。上两级才到仓库根。
+  return join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'tools', 'vd', 'build', VD_DEX_NAME)
 }
 
 /** 副屏进程在设备上的落点。/data/local/tmp 是 adb shell 可写的位置。 */
