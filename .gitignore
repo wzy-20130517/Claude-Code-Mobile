@@ -36,3 +36,4 @@ dsh-host/settings-*.json
 dsh-host/*.log
 dsh-host/*.pid
 rolemate-mobile.png
+core/tools/vd/build/
