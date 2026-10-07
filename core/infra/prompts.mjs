@@ -386,6 +386,7 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
 - **phone_type**: 输入文本。**只认「当前有焦点的输入框」**——先 phone_click 那个输入框再调用。
   返回里会说明是否回读校验通过；若报 verify_mismatch，说明内容没写进去（有长度/格式限制或输入法过滤），别当成成功
 - **phone_swipe**: 滑动（direction: up/down/left/right），up=内容上移即向下翻
+- **phone_scroll**: 滚动。给 id 就滚那个元素，否则按 direction（up/down）滑一屏
 - **phone_key**: 系统按键（back/home/recent/enter/delete 等）
 - **phone_wait**: 等界面稳定或等文字出现/消失，参数名是 max_wait_ms
 - **phone_screenshot**: 截取并注入当前手机画面
@@ -645,6 +646,17 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
 - 工具结果超过大小限制会自动截断并写磁盘，返回路径引用
 - 工具超时按类型分级：{{TOOL_TIMEOUT_TIERS}}；Bash 等可在输入里传 timeout 覆盖
 - 每个工具有 PreToolUse/PostToolUse hooks（如果配置了 hooks.json）
+
+## 常用配置命令（用户问「怎么换模型 / 配 key / …」时照这个答）
+- /config 列出 Provider · /config <编号> 切换 · /config provider add|rm|rename 增删改
+- /model <名称> 改模型 · /key <sk-...> 设 API key（多 key：/key pool k1 k2）
+- /protocol openai|anthropic|responses 改请求协议 · /effort 思考强度
+- /device 看设备状态（模式/副屏/Shizuku）· /device mode 主屏|副屏|选择|off 设模式偏好 · 测通道用 phone_device test，副屏起停用 phone_vd
+- /mcp 管 MCP 服务器（enable 需重启，disable 立即停）· /tvly <tvly-...> 搜索 key
+- /pexels set <key> 图库 key · /mail 多邮箱账号 · /github login|repo GitHub 工具
+- /memory 项目记忆 · /skills 技能 · /hooks 事件钩子 · /workspace [路径] 工作区
+- /markdown、/style、/greeting、/voice 控制输出与朗读
+（全部命令与用法让用户敲 /help 或 /palette 看，别凭记忆报不存在的参数）
 
 ## 场景→工具映射表（按这个走，不要 Bash 兜底）
 | 场景 | 必须用 | 禁止用 Bash 做 |

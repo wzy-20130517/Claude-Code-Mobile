@@ -23,6 +23,7 @@ import { HashlineReadTool, HashlineEditTool, HashlineGrepTool } from '../tools/t
 import { ApplyPatchTool, TestTool, DiagnosticsTool, RepoMapTool, SymbolsTool, SafeRenameTool, SleepTool } from '../tools/tools-smart.mjs'
 import { ViewImageTool, ViewVideoTool, ScreencapTool } from '../tools/tools-vision.mjs'
 import { ImageGenTool } from '../tools/tools-imagegen.mjs'
+import { PresentTool } from '../tools/present-tool.mjs'
 // 【Web 与 CLI 工具对齐】这五组工具以前只在 index.mjs（CLI 路径）注册，
 // web/ 走的 engine-setup 一条都没有 —— 于是 Web 里 AI 看不到目标契约、
 // 建不了任务/团队、连不了 GitHub、定不了定时任务。统一在 toolkit 里注册。
@@ -141,6 +142,11 @@ export function createEngineToolkit(opts = {}) {
   registry.register(new ViewVideoTool())
   if (opts.includeScreencap !== false) registry.register(new ScreencapTool())
   registry.register(new ImageGenTool({ onPresent: opts.onPresent }))
+  // Present：Web 在 extraTools 里传了带 onPresent 的实例（防重复注册）；
+  // 没传的宿主注册一个降级版（execute 返回文字提示，不报错）。
+  if (!(opts.extraTools || []).some(t => t && t.name === 'Present')) {
+    registry.register(new PresentTool({ cwd: opts.cwd || process.cwd(), onPresent: opts.onPresent || null }))
+  }
   if (opts.includeTermuxTools !== false) for (const t of termuxTools) registry.register(t)
   // 目标契约（跨轮自动推进的三件套：读契约 / 改状态 / 加预算）
   for (const t of createGoalTools(() => opts.sessionId || null)) registry.register(t)

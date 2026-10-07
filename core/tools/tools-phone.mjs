@@ -981,6 +981,71 @@ export class PhoneSwipeTool extends Tool {
   }
 }
 
+// 【2026-10-07 从 APK 移植】APK 的 PhoneTools.kt 有 phone_scroll，CLI 只有 phone_swipe。
+// 语义差异：phone_swipe 的 ref 是「在元素范围内滑」（span 按元素尺寸 0.6），
+// phone_scroll 的 ref 是「滚那个元素」——以元素中心为起点滑固定距离，
+// 不按元素高度算（小元素会滑不动）。无 ref 时滑整屏（比 swipe 的 0.35 屏高更接近一屏）。
+export class PhoneScrollTool extends Tool {
+  constructor() {
+    super({
+      name: 'phone_scroll',
+      description: '滚动。给 ref 就滚那个元素，否则按 direction（up/down）滑一屏。',
+      input_schema: {
+        type: 'object',
+        properties: {
+          ref: { type: 'string', description: '要滚动的元素 id（省略则滑整屏）' },
+          direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: '滚动方向（up=内容上移即向下翻），默认 down' },
+          duration: { type: 'number', description: '毫秒，默认 300' },
+        },
+      },
+    })
+  }
+
+  async execute(input = {}) {
+    await ensurePhoneMode()
+    { const g = idleGuard('phone_scroll'); if (g) return g }
+    await ensureKeepalive('正在滚动')
+    const dur = Math.max(50, Math.min(3000, Number(input.duration) || 300))
+    const dir = String(input.direction || 'down').toLowerCase()
+    if (!['up', 'down', 'left', 'right'].includes(dir)) throw new Error('direction 必须是 up/down/left/right')
+    let x1, y1, x2, y2
+    if (input.ref) {
+      // ref 模式：以元素中心为起点，按方向滑固定 200px
+      const n = lookupRef(input.ref)
+      if (!n || !Number.isFinite(n.cx) || !Number.isFinite(n.cy)) {
+        throw new Error(`ref 已失效（#${input.ref}）—— 重新 phone_snapshot 再试（ref 模式需要节点坐标，副屏 vdRef 不支持）`)
+      }
+      const { cx, cy } = n, d = 200
+      const m = {
+        up: [cx, cy + d, cx, cy - d],
+        down: [cx, cy - d, cx, cy + d],
+        left: [cx + d, cy, cx - d, cy],
+        right: [cx - d, cy, cx + d, cy],
+      }[dir]
+      ;[x1, y1, x2, y2] = m
+    } else {
+      // 整屏模式：屏幕中心滑 0.8 屏高（接近滑一屏）
+      let W = 1080, H = 1920
+      const sz = await sh(`wm size`, 20000)
+      const mm = sz.out.match(/(\d+)x(\d+)/)
+      if (mm) { W = Number(mm[1]); H = Number(mm[2]) }
+      const cx = Math.floor(W / 2), cy = Math.floor(H / 2), span = Math.floor(H * 0.8)
+      const m = {
+        up: [cx, cy + span / 2, cx, cy - span / 2],
+        down: [cx, cy - span / 2, cx, cy + span / 2],
+        left: [cx + span / 2, cy, cx - span / 2, cy],
+        right: [cx - span / 2, cy, cx + span / 2, cy],
+      }[dir]
+      ;[x1, y1, x2, y2] = m
+    }
+    const [a, b, c, e] = [x1, y1, x2, y2].map(v => Math.round(v))
+    const r = await sh(`${await inputPrefix()} swipe ${a} ${b} ${c} ${e} ${dur}`, 30000)
+    if (!r.ok) throw new Error(`滚动失败：${r.err}`)
+    const where = input.ref ? `#${input.ref} 上` : '屏幕上'
+    return `已在 ${where}向 ${dir} 滚动 (${a},${b} → ${c},${e})\n界面已变化，需要继续操作请重新 phone_snapshot`
+  }
+}
+
 export class PhoneKeyTool extends Tool {
   constructor() {
     super({
@@ -1805,7 +1870,7 @@ export class PhoneHandoffTool extends Tool {
 
 export const PHONE_TOOLS = [
   PhoneSnapshotTool, PhoneScreenshotTool, PhoneClickTool, PhoneTapXYTool,
-  PhoneTypeTool, PhoneSwipeTool, PhoneKeyTool, PhoneWaitTool,
+  PhoneTypeTool, PhoneSwipeTool, PhoneScrollTool, PhoneKeyTool, PhoneWaitTool,
   PhoneAppTool, SayTool,
   PhoneShellTool, PhoneVdTool, PhoneDeviceTool, PhoneHandoffTool,
 ]

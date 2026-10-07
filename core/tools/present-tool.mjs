@@ -134,7 +134,7 @@ export class PresentTool extends Tool {
     if (typeof this.onPresent !== 'function') {
       // CLI 语境：没有渲染面板，说明情况即可，不当失败
       const what = needsContent ? `${content.length} 字符 ${kind} 源码` : `${files.length} 个文件`
-      return `（当前终端无内联渲染能力，已跳过展示：${what}。Web 端会直接渲染。）`
+      return `（终端无渲染能力；Web 端可内联展示。内容已接收：${what}）`
     }
 
     try {

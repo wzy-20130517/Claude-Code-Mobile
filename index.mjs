@@ -116,6 +116,7 @@ import { GITHUB_TOOLS } from './core/tools/tools-github.mjs'
 import { githubStatus, saveGithubConfig, ghApi, parseRepo } from './core/integrations/github.mjs'
 import { listTeams, teamOverview, formatTeamOverview, deleteTeam, inboxCounts } from './core/agent/teams.mjs'
 import { ImageGenTool, getImageGenConfig, setImageGenConfig } from './core/tools/tools-imagegen.mjs'
+import { PresentTool } from './core/tools/present-tool.mjs'
 import { ocrFile, ocrImage, setVisionConfig, visionEnabled } from './core/phone/ocr.mjs'
 import { atomicWrite } from './core/infra/atomic.mjs'
 import { runRestartPreflight, formatRestartPreflightFailure } from './core/infra/restart-preflight.mjs'
@@ -958,6 +959,8 @@ async function main() {
   for (const T of PHONE_TOOLS) registry.register(new T())
   registry.register(new ScreencapTool())
   registry.register(new ImageGenTool())
+  // Present：终端无渲染能力，execute 返回降级文案（内容已接收，不报错），与 Web 端同一工具
+  registry.register(new PresentTool({ cwd: getWorkspacePath() || process.cwd() }))
   // 以文找图 / 以图识图（Pexels 图库 + Yandex 识图）
   registry.register(new FindImageTool())
   registry.register(new ReverseImageTool())
