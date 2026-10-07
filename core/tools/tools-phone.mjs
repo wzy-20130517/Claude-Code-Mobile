@@ -494,6 +494,44 @@ function pickTopSegment(raw, focusPkg = '') {
  * 经常拿到空 → 显示「前台: 未知」，而 wait 循环里连读 7 次总能中）。
  * 所以这里自带重试。
  */
+/**
+ * 粘贴后回读校验 —— 对齐提示词承诺的 verify_mismatch 信号（2026-10-07 补）。
+ *
+ * 【为什么只有粘贴路径做】`input text`（ASCII）失败时 sh 直接报
+ * 「输入失败」，已有执行级校验；而剪贴板粘贴是「发出去了，应用收没收
+ * 看不到」—— KEYCODE_PASTE 被应用拒绝、输入法过滤、字段长度截断都会
+ * 静默发生，模型会把「已粘贴」当成功。
+ *
+ * 【怎么读】uiautomator dump 是唯一能拿到 focused 节点文本的通用通道
+ * （dumpsys activity top 的行不带 text，parseViewTree 拿不到）。
+ * 代价约 1~3s —— 只在粘贴后跑一次；dump 失败/超时**静默跳过**
+ * （返回 null），不阻塞、不误报。
+ *
+ * @returns {boolean} true=回读一致 false=不一致（真 verify_mismatch）
+ *          null=无法校验（dump 失败 / 无焦点文本）
+ */
+async function verifyFocusText(expected) {
+  try {
+    const u = await sh(`uiautomator dump /dev/stdout 2>&1 | head -c 300000`, 15000)
+    const xml = u.out || ''
+    if (!xml.includes('<node')) return null
+    const tags = xml.match(/<node [^>]+>/g) || []
+    let focusText = null
+    for (const tag of tags) {
+      if (!/focused="true"/.test(tag)) continue
+      const tm = tag.match(/ text="([^"]*)"/)
+      if (tm && tm[1]) { focusText = tm[1]; break }
+    }
+    if (focusText == null) return null
+    const decoded = focusText
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    return decoded.includes(expected)
+  } catch {
+    return null
+  }
+}
+
 async function readFocus(tries = 3) {
   for (let i = 0; i < tries; i++) {
     const r = await sh(`dumpsys window 2>/dev/null | grep -E 'mCurrentFocus' | head -1`, 25000)
@@ -823,8 +861,8 @@ export class PhoneTypeTool extends Tool {
     super({
       name: 'phone_type',
       description: '在手机上输入文本。'
-        + '建议先 phone_click 那个输入框（让它获得焦点）再调用，此时不用给 target；'
-        + '也可以直接给 target=输入框的节点 id（如 e12），跳过点击那一步。'
+        + '建议先 phone_click 那个输入框（让它获得焦点）再调用，此时不用给 ref；'
+        + '也可以直接给 ref=输入框的节点 id（如 e12），跳过点击那一步。'
         + '返回里会说明是否通过回读校验：报 verify_mismatch 说明内容没真正写进去'
         + '（字段有长度/格式限制，或被输入法过滤），别当成成功。'
         + '「节点已失效」表示界面刷新过，重新 snapshot 再试。',
@@ -876,8 +914,17 @@ export class PhoneTypeTool extends Tool {
       await sh(`${await inputPrefix()} keyevent 279`, 20000)
       await new Promise(r => setTimeout(r, 250))
       if (input.submit) await sh(`${await inputPrefix()} keyevent KEYCODE_ENTER`, 20000)
+      // 回读校验（提示词 P:386 承诺的 verify_mismatch 信号 —— 粘贴是
+      // 「发射」语义，必须回读才知道应用收没收）。null = 无法校验，跳过。
+      const vr = await verifyFocusText(text)
+      const verifyNote = vr === true
+        ? `\n回读校验通过（内容已写入）。`
+        : vr === false
+          ? `\n⚠️ verify_mismatch：输入执行了但回读不一致（可能被输入法过滤或字段有限制）。` +
+            `请用 phone_snapshot 确认实际内容，别当成成功。`
+          : ''
       return `已粘贴文本: ${text.slice(0, 60)}${input.submit ? '（并回车）' : ''}\n` +
-        `（含中文，走剪贴板粘贴。若未出现请确认输入框已聚焦，或手动长按输入框选粘贴）`
+        `（含中文，走剪贴板粘贴。若未出现请确认输入框已聚焦，或手动长按输入框选粘贴）` + verifyNote
     }
 
     // 纯 ASCII 走 input text。空格要转 %s，这是 Android 的约定

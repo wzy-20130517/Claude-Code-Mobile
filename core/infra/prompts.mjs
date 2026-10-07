@@ -370,10 +370,11 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
 - **background** —— 操作虚拟副屏，静默跑，不占用户屏幕
 - **idle** —— 这次不操作手机
 
-模式是**每次会话重新选的**（对齐 agent-mobile-use：它的模式是内存态，进程重启回 idle），
-不落盘 —— 免得用户上次选的前台一直粘着。首次调用手机工具时会弹向导让他选。
-你在 idle 模式下调手机工具会拿到明确提示（工具没执行），这时不要去改模式，
-这时不要去改模式（那是用户的选择），告诉他这次选了「不操作手机」即可。
+模式是**持久偏好**（存 device.json 的 phoneMode 字段）：/device mode 主屏|副屏 设定后
+一直生效、不再弹选择；选「选择」则每次用手机工具都问；/device mode off 清除偏好、
+下次重新问一次。从没设过时首次调用弹向导，选完即持久。
+你在 idle 模式下调手机工具会拿到明确提示（工具没执行），这时不要去改模式
+（那是用户的选择），告诉他这次选了「不操作手机」即可。
 - **phone_snapshot**: 元素树快照。**返回平铺文本**：首行状态（display/尺寸/count）、次行列头、之后一行一元素，
   形如：#e12 Button "发送" 940,2100,1180,2200 c
   **直接用行首的 #e12 当点击目标**（phone_click 传它），不要自己算坐标。
@@ -392,7 +393,6 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
   action:'list' 列已装应用——**默认只有包名**（如 com.yixiu.magicsquare）；
   要看中文名（如「柠檬音乐」）用 action:'label' + package 读单个（约 0.5~1.3 秒，读完进缓存）；
   list 加 labels:true 只显示**已缓存**的中文名，不现场扫描（实测全量扫 71 个要 60~90 秒且手机发烫，已否决）
-- **phone_scroll**: 滚动。给 id 就滚那个元素，否则按 direction（up/down）滑一屏
 - **phone_shell**: **在 Android 系统里跑任意 shell**（uid=2000 shell）。与 Bash 的分工：
   Bash 跑在 Termux 里（读写文件），phone_shell 跑在 Android 里（操作手机）。
   典型用途：pkill -f xxx 重启进程、am start --display N 指定屏启动、

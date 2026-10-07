@@ -14,7 +14,7 @@ Agent 可以直接操作 Android 手机：
 | 看当前界面 | `phone_snapshot`（元素树）· `phone_screenshot`（截图） |
 | 点击 | `phone_click`（按元素）· `phone_tap_xy`（按坐标） |
 | 输入 | `phone_type`（中英文都行） |
-| 滑动 / 翻页 | `phone_swipe` · `phone_scroll` |
+| 滑动 / 翻页 | `phone_swipe` |
 | 系统按键 | `phone_key`（back/home/recent/enter…） |
 | 启动应用 | `phone_app` |
 | 等界面就绪 | `phone_wait` |
