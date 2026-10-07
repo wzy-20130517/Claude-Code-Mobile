@@ -4,7 +4,7 @@
 // 已移除 cache-aware 自动摘要（易引发幻觉）；紧急保护依赖 agent 层上下文超长截断。
 import { CompactService } from './compact.mjs'
 import { backupBeforeCompact } from './compact-trash.mjs'
-import { readFileSync, existsSync } from 'fs'
+import { readFileSync, existsSync, statSync } from 'fs'
 import { atomicWrite } from '../infra/atomic.mjs'
 import { resolveConfigPath } from '../infra/paths.mjs'
 
@@ -72,9 +72,37 @@ let messageLimit = _ml
 let maxContext = _mc
 let cachePolicy = { ...DEFAULT_CACHE_POLICY, ..._cp, enabled: false } // 永远不强开自动摘要
 
-export function getTokenLimit() { return tokenLimit }
-export function getMessageLimit() { return messageLimit }
-export function getMaxContext() { return maxContext }
+// ══════════════════════════════════════════════════════════════════
+//  【2026-10-06 修】阈值热更新 —— 原来只在模块加载时读一次
+// ══════════════════════════════════════════════════════════════════
+//
+// 用户现象：「设了 600k 压缩阈值，但上下文到 654k 都没压缩」。
+//
+// 根因：`tokenLimit` 是模块级变量，只在**进程启动时**从 config 读一次
+// （上面那行 loadThresholds()）。用户运行中改阈值（/compact-threshold）
+// 只写了磁盘 —— 内存值还是旧的 0（= 关闭），于是 shouldCompact 恒 false。
+//
+// 实测时间线：进程启动 21:39:41，config 写入 21:39 —— 差 1 秒，读到了旧值。
+//
+// 修：每次 get 时比对 config.json 的 mtime，变了就重读。
+// 代价：每轮一次 stat（微秒级），远比读盘+JSON 解析便宜。
+let _lastCfgMtime = -1
+function refreshIfChanged() {
+  try {
+    const m = statSync(CONFIG_PATH).mtimeMs
+    if (m === _lastCfgMtime) return
+    _lastCfgMtime = m
+    const fresh = loadThresholds()
+    tokenLimit = fresh.tokenLimit
+    messageLimit = fresh.messageLimit
+    maxContext = fresh.maxContext
+    cachePolicy = { ...DEFAULT_CACHE_POLICY, ...fresh.cachePolicy, enabled: false }
+  } catch { /* 读不到就保持当前值 */ }
+}
+
+export function getTokenLimit() { refreshIfChanged(); return tokenLimit }
+export function getMessageLimit() { refreshIfChanged(); return messageLimit }
+export function getMaxContext() { refreshIfChanged(); return maxContext }
 export function getCachePolicy() {
   return { ...cachePolicy, maxContextTokens: maxContext, enabled: false }
 }
@@ -181,10 +209,27 @@ export async function autoCompact(agent, compactService, { print = console.log }
 
   const before = history.length
   try {
+    // ══════════════════════════════════════════════════════════════════
+    //  【2026-10-06 修】force: true —— 否则两层判据打架
+    // ══════════════════════════════════════════════════════════════════
+    //
+    // 用户现象：「设了 600k 阈值，上下文 660k 了还不压」。
+    //
+    // 根因：两条判据独立，后者否决前者 ——
+    //   · shouldCompact（本函数开头）：tokenLimit=600000，660k > 600k → true ✓
+    //   · compactService.analyze（内部）：pressure = 660k/1M = 0.66，
+    //     低于 0.82 软阈值 → recommendation='defer' → **不压缩**
+    //
+    // 两条都对，但语义不同：analyze 的 82% 是「按模型上下文比例」自动判断，
+    // 而用户设固定阈值（600k）是**明确表达「到这个数就压」** —— 应该尊重。
+    //
+    // force 只跳过「够不够格」的判断，不影响压缩策略选择（micro/摘要）
+    // 和 keepLast 等参数。
     const result = await compactService.compact(history, {
       lastPromptTokens,
       maxContextTokens: maxContext,
       policy: getCachePolicy(),
+      force: true,
     })
     if (!result.compacted) return false
     backupBeforeCompact(history, { reason: 'auto', meta: { before: history.length, after: result.messages.length } })
