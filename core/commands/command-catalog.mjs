@@ -137,7 +137,7 @@ export const COMMAND_DESCRIPTIONS = {
   name: '改显示名（改编号用 /config provider）',
   effort: '思考强度（每 Provider 独立）',
   style: '回复偏好（/style <自由文本>；与 /me 同字段）',
-  me: '用户资料（称呼/职业/偏好；注入提示词）',
+  me: '用户资料（称呼/职业/偏好；偏好与 /style 同字段）',
   github: 'GitHub 工具集（仓库/issue/PR 读写）',
   tasks: '持久待办（跟轮内 todo 不是一回事）',
   agents: '子 Agent：谁在跑、卡住了吗',

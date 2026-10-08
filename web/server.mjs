@@ -2622,6 +2622,20 @@ async function runMessage(runtime, content, attachments = []) {
     runtime.updatedAt = new Date().toISOString()
     saveRuntime(runtime)
     emit(runtime, 'modes', { plan: !!runtime.toolkit?.planMode?.enabled, deep: !!runtime.toolkit?.deepMode?.enabled, maxTurns: runtime.toolkit?.deepMode?.getMaxTurns?.() || null })
+    // 【2026-10-08 加】自动压缩（与 CLI 同源 core/session/auto-compact.mjs）。
+    // 之前 Web 只接了手动 /compact —— 用户设了阈值也没用（Web 侧压根不触发）。
+    // 默认关闭：isAutoCompactEnabled() 为 false 时 autoCompact 内部直接 return。
+    try {
+      const { autoCompact, isAutoCompactEnabled } = await import('../core/session/auto-compact.mjs')
+      if (isAutoCompactEnabled()) {
+        await autoCompact(agent, runtime.compactService, {
+          print: (text) => emit(runtime, 'notice', { text: String(text).replace(/\x1b\[[0-9;]*m/g, '') }),
+        })
+        runtime.history = agent.getHistory()
+      }
+    } catch (e) {
+      console.warn('[web] autoCompact 失败:', e?.message || e)
+    }
     runtime.runSnapshot = null
     emit(runtime, 'done', { session: sessionPayload(runtime), interrupted: false })
   } catch (error) {
@@ -2657,7 +2671,9 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === '/api/config') {
         if (req.method === 'GET') {
           const config = loadWebConfig()
-          return json(res, 200, { current: config.current, defaultProviderId: config.current, source: 'web-config.json', stream: config.stream !== false, permissionMode: config.permissionMode || 'bypassPermissions', thinking: config.thinking || {}, providers: publicProviders(config), chatModels: Array.isArray(config.chatModels) ? config.chatModels : [], defaultModelId: config.defaultModelId || null })
+          // 【2026-10-08 加】压缩阈值（compactThresholdTokens/Messages）——
+          // 设置页「自动压缩」区块用，与 CLI 同名同语义（0 = 关闭）。
+          return json(res, 200, { current: config.current, defaultProviderId: config.current, source: 'web-config.json', stream: config.stream !== false, permissionMode: config.permissionMode || 'bypassPermissions', thinking: config.thinking || {}, providers: publicProviders(config), chatModels: Array.isArray(config.chatModels) ? config.chatModels : [], defaultModelId: config.defaultModelId || null, compactThresholdTokens: config.compactThresholdTokens ?? 0, compactThresholdMessages: config.compactThresholdMessages ?? 0 })
         }
         // 【默认 Provider 要落盘】原来前端只能把它存 localStorage ——
         // 那是浏览器本地的，换设备/清缓存就没了，用户感受就是「选了不保存，
@@ -2679,11 +2695,23 @@ const server = http.createServer(async (req, res) => {
             if (!config.providers[target]) return json(res, 404, { error: `Provider 不存在：${target}` })
             config.current = target
           }
-          if (!target && !Array.isArray(body.chatModels) && body.defaultModelId === undefined) {
-            return json(res, 400, { error: '没有可保存的字段（current / chatModels / defaultModelId）' })
+          // 【2026-10-08 加】压缩阈值：0 = 关闭（与 CLI 语义一致）。
+          // 只做非负整数校验，范围检查交给 auto-compact 的 setter。
+          if (body.compactThresholdTokens !== undefined) {
+            const v = Number(body.compactThresholdTokens)
+            if (!Number.isFinite(v) || v < 0) return json(res, 400, { error: 'compactThresholdTokens 必须是非负数' })
+            config.compactThresholdTokens = Math.floor(v)
+          }
+          if (body.compactThresholdMessages !== undefined) {
+            const v = Number(body.compactThresholdMessages)
+            if (!Number.isFinite(v) || v < 0) return json(res, 400, { error: 'compactThresholdMessages 必须是非负数' })
+            config.compactThresholdMessages = Math.floor(v)
+          }
+          if (!target && !Array.isArray(body.chatModels) && body.defaultModelId === undefined && body.compactThresholdTokens === undefined && body.compactThresholdMessages === undefined) {
+            return json(res, 400, { error: '没有可保存的字段（current / chatModels / defaultModelId / compactThreshold*）' })
           }
           saveWebConfig(config)
-          return json(res, 200, { ok: true, current: config.current, chatModels: config.chatModels || [], defaultModelId: config.defaultModelId || null })
+          return json(res, 200, { ok: true, current: config.current, chatModels: config.chatModels || [], defaultModelId: config.defaultModelId || null, compactThresholdTokens: config.compactThresholdTokens ?? 0, compactThresholdMessages: config.compactThresholdMessages ?? 0 })
         }
       }
       // 【2026-10-08 合并】原 /api/output-styles 端点（GET 列表 / PATCH 切换）
@@ -3878,6 +3906,32 @@ async function startQqBridgeIfNeeded({ force = false } = {}) {
 
 server.listen(PORT, HOST, () => {
   console.log(`Claude Code Mobile Web 后端: http://${HOST}:${PORT}`)
+  // 【2026-10-08】自动压缩的阈值源注入 —— auto-compact.mjs 是模块级单例
+  //（CLI 和 Web 同进程共用），不注入的话 Web 读的是 CLI 的阈值、
+  // 改的时候还会写进 CLI 的 config.json。这里让它读写 Web 的配置：
+  // 阈值存 web-config.json（与 CLI config.json 分开），沿用同样的字段名。
+  import('../core/session/auto-compact.mjs').then(({ setThresholdSource }) => {
+    setThresholdSource({
+      load: () => {
+        const c = loadWebConfig()
+        return {
+          tokenLimit: c.compactThresholdTokens ?? 0,
+          messageLimit: c.compactThresholdMessages ?? 0,
+          maxContext: c.maxContextTokens ?? 1000000,
+          cachePolicy: c.compaction || {},
+        }
+      },
+      save: (v) => {
+        const c = loadWebConfig()
+        c.compactThresholdTokens = v.tokenLimit
+        c.compactThresholdMessages = v.messageLimit
+        c.maxContextTokens = v.maxContext
+        c.compaction = { ...(c.compaction || {}), ...(v.cachePolicy || {}), enabled: false }
+        saveWebConfig(c)
+      },
+    })
+    console.log('[web] 自动压缩阈值源已注入（web-config.json）')
+  }).catch(e => console.warn('[web] 自动压缩阈值源注入失败:', e?.message || e))
   startKeepalive({ port: PORT, host: HOST }).then(({ audioStarted }) => {
     console.log(`[web] 保活: wake-lock + 常驻通知${audioStarted ? ' + 静音音频' : '（静音音频未启动）'}`)
   }).catch(() => { })

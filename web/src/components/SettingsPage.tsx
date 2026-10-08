@@ -104,6 +104,40 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
 
   const isSelfHosted = localStorage.getItem('user_mode') === 'selfhosted';
 
+  // 【2026-10-08 加】自动压缩阈值（对齐 APK 设置页的「自动压缩」区块）。
+  // 存 web-config.json（与 CLI config.json 分开），字段名与 CLI 一致：
+  // compactThresholdTokens / compactThresholdMessages（0 = 关闭）。
+  const [acTokenDraft, setAcTokenDraft] = useState('0');
+  const [acMsgDraft, setAcMsgDraft] = useState('0');
+  const [acMsg, setAcMsg] = useState('');
+  useEffect(() => {
+    fetch('/api/config').then(r => r.json())
+      .then(d => {
+        setAcTokenDraft(String(d.compactThresholdTokens ?? 0));
+        setAcMsgDraft(String(d.compactThresholdMessages ?? 0));
+      })
+      .catch(() => {});
+  }, []);
+  async function saveAutoCompact() {
+    const t = Number(acTokenDraft || '0') || 0;
+    const m = Number(acMsgDraft || '0') || 0;
+    try {
+      const r = await fetch('/api/config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ compactThresholdTokens: t, compactThresholdMessages: m }),
+      });
+      const d = await r.json();
+      if (!r.ok) { setAcMsg(d.error || '保存失败'); return; }
+      setAcTokenDraft(String(d.compactThresholdTokens ?? t));
+      setAcMsgDraft(String(d.compactThresholdMessages ?? m));
+      setAcMsg('已保存');
+      setTimeout(() => setAcMsg(''), 2000);
+    } catch (e: any) {
+      setAcMsg(e?.message || '网络错误');
+    }
+  }
+
   useEffect(() => {
     // 两种模式统一走 getUserProfile：自部署读 /api/profile，失败自动回落 localStorage
     getUserProfile().then((data: any) => {
@@ -584,7 +618,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
               </div>
 
               <div>
-                <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">Claude 应该怎么称呼你？</label>
+                <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">称呼</label>
                 <input
                   type="text"
                   value={displayName}
@@ -598,7 +632,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
 
             {/* Work Function */}
             <div>
-              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">你的职业是什么？</label>
+              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">职业</label>
               <div className="relative">
                 <select
                   value={workFunction}
@@ -641,7 +675,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
           <h3 className="text-[16px] font-semibold text-claude-text mb-5">默认模型</h3>
           <div className="space-y-5">
             <div>
-              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">新对话默认使用的模型</label>
+              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">使用的模型</label>
               <div className="relative">
                 <select
                   value={defaultModelBase}
@@ -729,12 +763,53 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
           </div>
         </section>
 
-        {/* Send Key Section */}
+        {/* Auto Compact Section —— 对齐 APK 设置页的「自动压缩」区块 */}
         <section>
-          <h3 className="text-[16px] font-semibold text-claude-text mb-5">发送消息</h3>
+          <h3 className="text-[16px] font-semibold text-claude-text mb-5">自动压缩</h3>
+          <div className="space-y-5">
+            <p className="text-[12px] text-claude-textSecondary/70">
+              自动摘要可能丢细节，默认关闭；设了阈值才启用（与 CLI 的 /compact-threshold 同名同语义）。
+            </p>
+            <div className="grid grid-cols-2 gap-6">
+              <div>
+                <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">Token 阈值（0 = 关闭）</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={acTokenDraft}
+                  onChange={e => setAcTokenDraft(e.target.value.replace(/[^\d]/g, ''))}
+                  onBlur={() => saveAutoCompact()}
+                  placeholder="如 600000（60 万 token）"
+                  className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 transition-all placeholder-claude-textSecondary"
+                />
+              </div>
+              <div>
+                <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">消息条数阈值（0 = 不按条数）</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={acMsgDraft}
+                  onChange={e => setAcMsgDraft(e.target.value.replace(/[^\d]/g, ''))}
+                  onBlur={() => saveAutoCompact()}
+                  placeholder="如 500（超过 500 条消息时压）"
+                  className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 transition-all placeholder-claude-textSecondary"
+                />
+              </div>
+            </div>
+            <p className="text-[12px] text-claude-textSecondary">
+              当前：
+              {(Number(acTokenDraft) > 0 || Number(acMsgDraft) > 0) ? '已启用' : '关闭'}
+              {acMsg && <span className="ml-2 text-claude-textSecondary/60">{acMsg}</span>}
+            </p>
+          </div>
+        </section>
+
+        {/* Send Key Section —— 标题对齐 APK 的「对话」 */}
+        <section>
+          <h3 className="text-[16px] font-semibold text-claude-text mb-5">对话</h3>
           <div className="grid grid-cols-2 gap-6">
             <div>
-              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">发送消息</label>
+              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">发送键</label>
               <div className="relative">
                 <select
                   value={sendKey}

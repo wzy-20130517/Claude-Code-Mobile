@@ -3347,6 +3347,15 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
         if (event === 'todos' && Array.isArray(data?.todos)) {
           setTodoItems(data.todos as TodoItem[]);
         }
+        // 【2026-10-08 加】自动压缩等系统通知 —— 显示为一条 assistant 气泡。
+        // 服务端在 run 结束后跑 autoCompact（与 CLI 同源），产出
+        // 「[自动压缩: N → M 条消息]」这类文本，原来 Web 侧没有事件通道会静默丢弃。
+        if (event === 'notice' && data?.text) {
+          setMessagesFor(conversationId!, prev => [
+            ...prev,
+            { id: `notice-${Date.now()}`, role: 'assistant', content: String(data.text), isNotice: true } as any,
+          ]);
+        }
         // plan / deep 模式真实状态
         if (event === 'modes' && data) {
           setPlanMode(!!data.plan);

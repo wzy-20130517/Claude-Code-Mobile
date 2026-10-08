@@ -25,6 +25,39 @@ const DEFAULT_CACHE_POLICY = {
 // ⚠ 自动压缩阈值（compactThresholdTokens/Messages）就存在这个文件里。
 const CONFIG_PATH = resolveConfigPath('config.json')
 
+/**
+ * 【2026-10-08 加】可注入的配置源 —— 供 Web 复用本模块。
+ *
+ * 默认（CLI）行为不变：读 CLI 的 config.json。Web 侧调用
+ * setThresholdSource({ load, save }) 注入自己的读写（web-config.json），
+ * 之后 getTokenLimit/setTokenLimit 等都走注入源。
+ *
+ * 【为什么必须注入而不是让 Web 直接用】
+ * 本模块硬编码读 CLI 的 config.json（CONFIG_PATH）。Web 服务是独立进程
+ * （node web/server.mjs），它的配置在 web-config.json —— 不注入的话：
+ * ① 用户在 Web 设置页改的阈值写进了 web-config.json，但这里读的是
+ *    CLI config.json，改了不生效；
+ * ② 反向的 setTokenLimit（Web 触发）会写进 CLI 的 config.json，污染终端配置。
+ * 注入后两个进程各读各的，互不干扰。
+ */
+let _thresholdSource = null
+export function setThresholdSource(source) {
+  _thresholdSource = source || null
+  _lastCfgMtime = -1   // 强制下次 get 重读
+}
+function activeLoad() {
+  if (_thresholdSource?.load) {
+    try { return _thresholdSource.load() } catch { /* 回退默认 */ }
+  }
+  return loadThresholds()
+}
+function activeSave() {
+  if (_thresholdSource?.save) {
+    try { _thresholdSource.save({ tokenLimit, messageLimit, maxContext, cachePolicy }); return } catch { /* 回退 */ }
+  }
+  saveThresholds()
+}
+
 function loadThresholds() {
   try {
     if (!existsSync(CONFIG_PATH)) {
@@ -66,7 +99,7 @@ function saveThresholds() {
   }
 }
 
-const { tokenLimit: _tl, messageLimit: _ml, maxContext: _mc, cachePolicy: _cp } = loadThresholds()
+const { tokenLimit: _tl, messageLimit: _ml, maxContext: _mc, cachePolicy: _cp } = activeLoad()
 let tokenLimit = _tl
 let messageLimit = _ml
 let maxContext = _mc
@@ -86,8 +119,22 @@ let cachePolicy = { ...DEFAULT_CACHE_POLICY, ..._cp, enabled: false } // 永远�
 //
 // 修：每次 get 时比对 config.json 的 mtime，变了就重读。
 // 代价：每轮一次 stat（微秒级），远比读盘+JSON 解析便宜。
+//
+// 【2026-10-08 注入源的处理】注入源（Web）不走 mtime 快路径 ——
+// 它的配置在 web-config.json，mtime 对不上 CONFIG_PATH。直接每取现读，
+// 注入方（server.mjs）的 load 本身是同步 JSON 读，开销可接受。
 let _lastCfgMtime = -1
 function refreshIfChanged() {
+  if (_thresholdSource?.load) {
+    try {
+      const fresh = _thresholdSource.load()
+      tokenLimit = fresh.tokenLimit ?? tokenLimit
+      messageLimit = fresh.messageLimit ?? messageLimit
+      maxContext = fresh.maxContext ?? maxContext
+      cachePolicy = { ...DEFAULT_CACHE_POLICY, ...(fresh.cachePolicy || {}), enabled: false }
+    } catch { /* 读不到就保持当前值 */ }
+    return
+  }
   try {
     const m = statSync(CONFIG_PATH).mtimeMs
     if (m === _lastCfgMtime) return
@@ -115,7 +162,7 @@ export function isAutoCompactEnabled() {
 export function setTokenLimit(v) {
   if (typeof v === 'number' && (v > 1000 || v === 0)) {
     tokenLimit = v
-    saveThresholds()
+    activeSave()
     return true
   }
   return false
@@ -124,7 +171,7 @@ export function setTokenLimit(v) {
 export function setMessageLimit(v) {
   if (typeof v === 'number' && (v >= 5 || v === 0)) {
     messageLimit = v
-    saveThresholds()
+    activeSave()
     return true
   }
   return false
@@ -133,7 +180,7 @@ export function setMessageLimit(v) {
 export function setMaxContext(v) {
   if (typeof v === 'number' && v > 10000) {
     maxContext = v
-    saveThresholds()
+    activeSave()
     return true
   }
   return false

@@ -159,7 +159,7 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
 - /config vision on|off 控制当前 Provider 的识图路由：开启时优先用当前模型，关闭或未配置时用备用识图 Provider（/config vision set <id> 指定），失败再回退 tesseract
 - 用户可以使用 /effort none|minimal|low|medium|high|xhigh|max 设置深度思考强度（每 Provider 独立，模型支持范围可能不同），用 /effort off|show|hide 控制开关与显示，用 /effort replay on|off 控制历史思考是否回传给模型（**默认 off**，省上下文；代价是模型看不到自己上一轮的想法。要开需显式 on，每个 Provider 独立）
 - 用户可以使用 /github 管理 GitHub 工具集（/github login 设 token、/github repo 设仓库、/github test 验连通）；配置后可用 GitHubRepo/GitHubIssues/GitHubIssueView/GitHubPRs/GitHubPRComments/GitHubComment/GitHubCreateIssue/GitHubFile 工具读写仓库。各自管 token
-- 用户可以使用 /me 管理用户资料（称呼 / 职业 / 回复偏好，注入系统提示词）：/me set display_name 小杰 · /me set personal_preferences "..." · /me 查看 · /me clear-all 清空
+- 用户可以使用 /me 管理用户资料（称呼 / 职业 / 回复偏好，注入系统提示词）：/me set display_name 小杰 · /me set personal_preferences "..." · /me 查看 · /me clear-all 清空。注意 personal_preferences 与 /style 是**同一字段**（回复偏好），两个命令改的是同一个东西
 - 用户可以使用 /style 设置回复偏好（影响回复方式，与 /me 的 personal_preferences 是同一字段）：/style <自由文本> 设置 · /style 无参查看 · /style clear 清空 · /style list 查看旧的内置风格模板（只读，输出风格已并入回复偏好）
 - 子 Agent / AgentWorkflow 在后台运行时，不保证立即有输出；用 AgentStatus 工具查看生命周期、耗时、turn、输出尾部和最近 trace，completed/failed/killed 才是终态，(no output) 不等于完成
 - **子 Agent 并发上限 24**（全局，含递归派生的下级；中转站不限并发，但手机本机资源仍有限）。超限时 Agent 工具返回 rejected:"concurrency_limit" 的说明，**这不是错误、任务也没失败**：等已有子 Agent 完成后重试、改成串行、或缩减本层扇出，不要因此放弃任务。AgentStatus 可看当前在跑几个
