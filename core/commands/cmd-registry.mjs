@@ -200,7 +200,7 @@ export function buildCommandTable(ctx, options = {}) {
   // /markdown —— 渲染样式切换（经典 / 官方）
   merge('cmd-markdown', () => makeMarkdownCommand(ctx))
 
-  // /style —— 输出风格（影响回复方式）
+  // /style —— 回复偏好（2026-10-08 合并前叫「输出风格」）
   merge('cmd-style', () => makeStyleCommand(ctx))
 
   // /update —— 版本检查与一键更新（镜像下载，不覆盖用户数据）

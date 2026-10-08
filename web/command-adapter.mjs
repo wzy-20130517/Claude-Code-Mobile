@@ -427,6 +427,12 @@ export function buildWebCtx(runtime, deps = {}) {
     // （CLI 侧它们会调 agent.systemPrompt = getCurrentSystemPrompt()）
     onWorkspaceChanged: () => {},
     onProfileChanged: () => {},
+    // 【2026-10-08】/style（回复偏好）用：Web 的资料是 web-profile.json，
+    // 与 CLI 的 cli-profile.json 是两个文件（见 core/session/user-profile.mjs
+    // 顶部说明）。cmd-style.mjs 两端共用，不能直接 import CLI 那份 ——
+    // 通过这两个函数注入 Web 自己的读写实现（deps 由 server.mjs 提供）。
+    getProfile: deps.getProfile,
+    setProfile: deps.setProfile,
     // /cache 用：CLI 侧同步到常驻 api 实例；Web 的 ApiClient 每次请求现读配置，
     // 所以只需把配置写回（saveConfig 已做），同步动作是 no-op。
     syncActiveProvider: () => {},

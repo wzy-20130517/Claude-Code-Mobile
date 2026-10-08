@@ -258,19 +258,17 @@ function saveWebProfile(patch) {
 function buildProfilePrompt(profile) {
   const name = (profile.display_name || profile.full_name || '').trim()
   const job = (profile.work_function || '').trim()
-  // 【2026-09-20 用户反馈「个人资料页的回复偏好可能与 style 冲突」—— 确认冲突】
-  // 「回复偏好」和 `/style`（输出风格）**都在往 systemPrompt 里注入"怎么回复"**：
-  //   · 回复偏好 → `- 用户的回复偏好（必须遵守）：<自由文本>`
-  //   · /style    → `# 输出风格` 整段替换
-  // 两者同时存在时模型收到两份可能矛盾的指令，用户也分不清该改哪个。
-  //
-  // 处理：**回复偏好不再注入**，回复方式统一由 `/style` 管（CLI 也是这套）。
-  // 字段本身保留（不删数据结构），避免老配置报错；设置页会给一句指引。
-  // 用户若确实想加自由文本要求，可以写进自定义风格文件（.claude/output-styles/*.md）。
-  if (!name && !job) return ''
+  const prefs = (profile.personal_preferences || '').trim()
+  // 【2026-10-08 合并】原「输出风格」（/style + config.outputStyle）已并入
+  // 回复偏好 —— 两者都回答「希望 AI 怎么回复我」，同时注入会让模型收到两份
+  // 可能矛盾的指令（2026-09-20 就发现过这个冲突，当时的处理是废掉回复偏好注入、
+  // 保留 /style；现在统一到回复偏好这条：自由文本更通用，CLI/APK 也都是它）。
+  // 所以这里恢复 prefs 的注入，outputStyleSection 注入已删（见下方 sessionPrompt）。
+  if (!name && !job && !prefs) return ''
   const lines = ['\n# 用户资料（来自 Web 设置页，用户主动填写）']
   if (name) lines.push(`- 称呼用户为：${name}`)
   if (job) lines.push(`- 用户职业：${job}（可据此调整术语深度与举例领域）`)
+  if (prefs) lines.push(`- 用户的回复偏好（必须遵守）：${prefs}`)
   return lines.join('\n') + '\n'
 }
 // 只做「精确解析」：解析不出来返回 null，绝不静默落到 config.current。
@@ -1473,6 +1471,15 @@ async function getWebCtxDeps() {
       try { return JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version } catch { return 'web' }
     })(),
 
+    // ── /style（回复偏好）──
+    // Web 的资料读写走 web-profile.json（与 CLI 的 cli-profile.json 分开）。
+    // cmd-style.mjs 通过 ctx.getProfile / ctx.setProfile 使用它们。
+    getProfile: () => (loadWebProfile().personal_preferences || '').trim(),
+    setProfile: (v) => {
+      try { saveWebProfile({ personal_preferences: String(v ?? '') }); return { ok: true } }
+      catch (e) { return { ok: false, error: `写入失败: ${e.message}` } }
+    },
+
     // ── 设备 shell 通道（/device）──
     device: deviceMod || null,
 
@@ -2411,27 +2418,16 @@ async function buildAgent(runtime) {
   const workspace = runtime.workspacePath || loadWebSettings().workspacePath
   const webContext = ClaudeMdLoader.load(join(ROOT, 'web'), 1)
   if (existsSync(WEB_MEMORY_PATH)) webContext.push({ path: WEB_MEMORY_PATH, content: readFileSync(WEB_MEMORY_PATH, 'utf8').slice(0, 10000) })
-  // 输出风格（/style）注入 —— 与 CLI 同一份来源（core/output-styles.mjs）。
-  // 不注入的话用户在 Web 设了风格也不生效（风格本质是往提示词里加一段）。
-  let outputStyleSection = ''
-  try {
-    const { getOutputStyle, getOutputStyleSection, listOutputStyles } = await import('../core/ui/output-styles.mjs')
-    const styleName = config.outputStyle
-    if (styleName && styleName !== 'default') {
-      const st = getOutputStyle(styleName, workspace)
-      if (st) {
-        const section = getOutputStyleSection(st)
-        if (section) outputStyleSection = `\n\n${section}`
-      } else {
-        // 配置里写了但风格文件不存在（用户删了 / 换了机器）——
-        // 明确告诉模型而不是静默忽略，否则用户会以为风格坏了却查不出原因
-        const available = [...listOutputStyles(workspace).keys()].join(' / ')
-        outputStyleSection = `\n\n# Output Style 未生效\n配置里的风格「${styleName}」不存在，已回退默认行为。可用: ${available}`
-      }
-    }
-  } catch {}
+  // 【2026-10-08 合并】原来这里有「输出风格（/style）注入」段（读 config.outputStyle
+  // → 拼 outputStyleSection）。已删 —— 输出风格并入回复偏好，注入统一走
+  // buildProfilePrompt 里的 personal_preferences（下面 toolkit.getSystemPrompt
+  // 的 wrapper 里动态拼，见那段注释）。config.outputStyle 字段保留不删
+  //（老配置解析不报错），但不再读取。
+  //
+  // ⚠️ profile 注入**不放这里**（sessionPrompt 是构造时快照，放进来改完偏好
+  // 本会话内不生效 —— 正是 Web 侧一直没发现的坑）。见下方 wrapper。
 
-  const sessionPrompt = `${WEB_SYSTEM_PROMPT}\n\n# 当前 Web session\n- sessionId: ${runtime.id}\n- workspace: ${workspace}\n- Provider: ${providerId}\n- Model: ${activeModel || provider.model || '(unknown)'}\n- Protocol: ${provider.protocol || 'openai'}\n${buildProfilePrompt(loadWebProfile())}${outputStyleSection}`
+  const sessionPrompt = `${WEB_SYSTEM_PROMPT}\n\n# 当前 Web session\n- sessionId: ${runtime.id}\n- workspace: ${workspace}\n- Provider: ${providerId}\n- Model: ${activeModel || provider.model || '(unknown)'}\n- Protocol: ${provider.protocol || 'openai'}`
   const toolkit = createEngineToolkit({ cwd: workspace, sessionId: runtime.id, historyFile: WEB_HISTORY_PATH, sessionsDir: SESSION_ROOT, skillsDirs: skillLoader.rootDirs, commandsDirs: commandLoader.roots, api, askUser,
   // 【2026-09-20 清理】原来这里传了 includeRestart: false —— 但 createEngineToolkit
   // 根本没有这个参数（Restart 工具 2026-08-25 就整个删了，CLI 也没有）。
@@ -2487,8 +2483,16 @@ async function buildAgent(runtime) {
   // 系统提示词在运行中会被多处重新获取（模式切换、/plan、/coordinate 等都会
   // `agent.systemPrompt = toolkit.getSystemPrompt()` 重取）。若只在构造时拼一次，
   // 用户切模式后项目指令就丢了。包一层能保证**每次取都带上**，不用改那些调用点。
+  //
+  // 【2026-10-08 加 profile 动态注入】同理：用户资料（称呼/职业/**回复偏好**）
+  // 原来拼在 sessionPrompt 里（构造时快照）—— 改了偏好后 agent.systemPrompt
+  // 不会更新（agent.mjs:79 是值赋值、buildAgent 还有缓存），表现为
+  // 「设置页改了回复偏好，本会话内模型看不到」。现在挪到这里每取现读：
+  // 设置页保存（/api/profile）、/style 命令改完，下一轮对话即生效。
   const baseGetSystemPrompt = toolkit.getSystemPrompt.bind(toolkit)
-  toolkit.getSystemPrompt = () => baseGetSystemPrompt() + (projectStore.buildPromptSection(runtime.id) || '')
+  toolkit.getSystemPrompt = () => baseGetSystemPrompt()
+    + (projectStore.buildPromptSection(runtime.id) || '')
+    + (() => { try { return buildProfilePrompt(loadWebProfile()) } catch { return '' } })()
 
   const agent = new Agent({ api, systemPrompt: toolkit.getSystemPrompt(), tools: toolkit.tools(), useStream: () => config.stream !== false, undoStore: toolkit.multiUndo, maxTurns: config.web?.maxTurns || NORMAL_MAX_TURNS, cwd: runtime.workspacePath, sessionId: runtime.id, onPermissionRequest: canRunWebTool,
     // 【运行中插话 / mid-turn steering】agent.mjs 早就为此留了 pullSteering 钩子
@@ -2682,31 +2686,11 @@ const server = http.createServer(async (req, res) => {
           return json(res, 200, { ok: true, current: config.current, chatModels: config.chatModels || [], defaultModelId: config.defaultModelId || null })
         }
       }
-      // 输出风格列表/保存（2026-09-29 与 CLI /style、APK 设置页三方互通）。
-      // 读写同一个 config.outputStyle —— 谁改都能生效（注入逻辑在 2411 行，每轮读）。
-      if (url.pathname === '/api/output-styles') {
-        const workspace = loadWebSettings().workspacePath || process.cwd()
-        const { listOutputStyles } = await import('../core/ui/output-styles.mjs')
-        const map = listOutputStyles(workspace)
-        if (req.method === 'GET') {
-          const config = loadWebConfig()
-          return json(res, 200, {
-            current: config.outputStyle || 'default',
-            styles: [...map.values()].map(s => ({ id: s.id, name: s.name, description: s.description || '' })),
-          })
-        }
-        if (req.method === 'PATCH' || req.method === 'POST') {
-          const body = await readBody(req)
-          const id = String(body.id || '').trim()
-          if (!id) return json(res, 400, { error: '缺少 id' })
-          if (!map.has(id)) return json(res, 404, { error: `风格不存在：${id}` })
-          const config = loadWebConfig()
-          config.outputStyle = id
-          saveWebConfig(config)
-          return json(res, 200, { ok: true, current: id })
-        }
-        return json(res, 405, { error: 'method not allowed' })
-      }
+      // 【2026-10-08 合并】原 /api/output-styles 端点（GET 列表 / PATCH 切换）
+      // 已删 —— 输出风格并入回复偏好，设置页改走 /api/profile 的
+      // personal_preferences（上面 buildProfilePrompt 注入，每轮生效）。
+      // 端点删掉而不是留着：留着会让「风格还能切」的假象存在（前端已无入口），
+      // 外部调用者也会以为 config.outputStyle 仍然有效。
       if (req.method === 'GET' && url.pathname === '/api/providers') return json(res, 200, publicProviders(loadWebConfig()))
       // 拉取上游模型清单（由服务端代发，避开浏览器 CORS；也不必把 key 暴露给前端）
       if (req.method === 'POST' && /^\/api\/providers\/[^/]+\/fetch-models$/.test(url.pathname)) {
@@ -2820,7 +2804,24 @@ const server = http.createServer(async (req, res) => {
         if (req.method === 'GET') return json(res, 200, loadWebProfile())
         if (req.method === 'PATCH' || req.method === 'PUT' || req.method === 'POST') {
           const body = await readBody(req)
-          return json(res, 200, saveWebProfile(body || {}))
+          const saved = saveWebProfile(body || {})
+          // 【2026-10-08 加】profile 变了必须让 systemPrompt 跟上 ——
+          // agent.systemPrompt 是**构造时快照**（agent.mjs:79 赋值，非 getter），
+          // buildAgent 又有 `if (runtime.agent) return` 缓存。不处理的话
+          // 「改了回复偏好，模型本会话内永远用旧的」——Web 侧一直是这个坑
+          //（CLI 侧由 onProfileChanged → invalidateSystemPromptSection 解决）。
+          // 修法：有活跃 agent 的 runtime 重取一次 systemPrompt（与 /plan、
+          // /coordinate 切换后的处理同款），比重建整个 agent 便宜得多。
+          try {
+            for (const rt of runtimes.values()) {
+              if (rt.toolkit && rt.agent) {
+                rt.agent.systemPrompt = rt.toolkit.getSystemPrompt()
+              }
+            }
+          } catch (e) {
+            console.warn('[web profile] systemPrompt 刷新失败:', e?.message || e)
+          }
+          return json(res, 200, saved)
         }
       }
       const providerMatch = url.pathname.match(/^\/api\/providers\/([^/]+)(?:\/web-search-test)?$/)

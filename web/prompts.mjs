@@ -100,7 +100,7 @@ Web 复用 CLI 的命令实现（同一份 core/cmd-*.mjs，44 个可用）。�
 - 通用：/help /compact /context /cost /stats /files /errors /trace /todos /tasks /team
 - 配置：/config（Provider 管理，含 test / provider add|rm|rename|list / vision 等子命令）
 - 快捷：/model /url /key /name（改当前会话 Provider 的字段，支持 [id] 指定目标）
-- 风格：/style（输出风格，影响回复方式）、/markdown（**只影响 CLI 终端配色**，对 Web 无效）
+- 回复偏好：/style（设置/查看回复偏好，与设置页个人资料的字段是同一个；2026-10-08 合并前叫「输出风格」）、/markdown（**只影响 CLI 终端配色**，对 Web 无效）
 - 其他：/goal /plan /deep /watch /coordinate（Web 里也叫 /cowork，同一个东西）/skills /mcp /pexels /mail /qq /github /imagegen /voice 等
 
 **/coordinate = 协调者模式**：\`/coordinate\` 切换 · \`on|off\` 显式设置 ·

@@ -57,11 +57,13 @@ export const HELP_TOPICS = {
 /effort show|hide        是否在终端显示思考内容
 /effort replay on|off    历史思考是否回传给模型（默认 off；仅当前 Provider）
 
-输出风格
-/style [名字]            选择输出风格（影响回复方式；无参进列表）
-/style off               回到默认（无额外风格提示词）
-自定义：在 .claude/output-styles/ 放 .md（文件名即风格名）
-  或 ~/.claude/output-styles/（用户级，所有项目共用）
+回复偏好（原「输出风格」，2026-10-08 合并）
+/style <自由文本>        设置回复偏好（如 /style 回答尽量简洁，使用中文）
+/style                   查看当前偏好
+/style clear             清空（回默认行为）
+/style list              查看旧的内置风格模板（只读参考）
+说明：与 /me 的 personal_preferences 是同一字段；旧的
+  .claude/output-styles/*.md 仍可打开复制正文到 /style。
 
 用户资料
 /me                      查看（称呼/职业/偏好）

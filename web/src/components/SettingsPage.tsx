@@ -42,30 +42,9 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [workFunction, setWorkFunction] = useState('');
   const [personalPreferences, setPersonalPreferences] = useState('');
 
-  // 输出风格（2026-09-29 与 CLI /style、APK 设置页三方互通 —— 同一个
-  // config.outputStyle 字段）。原来这里只有一行「请用 /style」死提示。
-  const [styleList, setStyleList] = useState<Array<{ id: string; name: string; description: string }>>([])
-  const [currentStyle, setCurrentStyle] = useState('default')
-  useEffect(() => {
-    fetch('/api/output-styles').then(r => r.json()).then(d => {
-      if (Array.isArray(d.styles)) { setStyleList(d.styles); setCurrentStyle(d.current || 'default') }
-    }).catch(() => {})
-  }, [])
-  const handleStylePick = async (id: string) => {
-    setCurrentStyle(id)   // 乐观更新
-    try {
-      const r = await fetch('/api/output-styles', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
-      })
-      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || r.status) }
-    } catch (err) {
-      console.error('保存风格失败', err)
-      // 回读真实值
-      fetch('/api/output-styles').then(r => r.json()).then(d => setCurrentStyle(d.current || 'default')).catch(() => {})
-    }
-  }
+  // 【2026-10-08 合并】原「输出风格」选择器的状态（styleList/currentStyle/
+  // handleStylePick + /api/output-styles 拉取）已删 —— 输出风格并入回复偏好，
+  // 现在只有 personalPreferences 一个入口（下面那个 textarea）。
   const [theme, setTheme] = useState('light');
   const [chatFont, setChatFont] = useState('default');
   const [defaultModel, setDefaultModel] = useState('claude-opus-4-6-thinking');
@@ -633,41 +612,15 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
               </div>
             </div>
 
-            {/* 输出风格（2026-09-29：死提示 → 真选择器；与 CLI /style、APK 同字段） */}
+            {/* 回复偏好（2026-10-08 合并：原「输出风格」下拉已删 —— 两者是
+                同一件事，都回答「希望 AI 怎么回复我」。现在只有这一个入口，
+                与 CLI /style、APK 设置页读写同一字段（personal_preferences）。） */}
             <div>
-              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1">输出风格（/style）</label>
+              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1">回复偏好</label>
               <p className="text-[12px] text-claude-textSecondary/60 mb-2">
-                决定回复的表达方式。写入 <code className="font-mono text-claude-text">config.outputStyle</code>，
-                与 CLI 的 /style、APK 设置页互通；自定义风格放 <code className="font-mono text-claude-text">.claude/output-styles/</code>。
-                改完下一轮对话生效。
-              </p>
-              <select
-                value={currentStyle}
-                onChange={e => handleStylePick(e.target.value)}
-                className="w-full px-3 py-2.5 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 transition-all appearance-none"
-              >
-                {styleList.map(st => (
-                  <option key={st.id} value={st.id}>{st.name}{st.description ? ` — ${st.description}` : ''}</option>
-                ))}
-                {styleList.length === 0 && <option value="default">默认</option>}
-              </select>
-            </div>
-
-            {/* Personal Preferences */}
-            <div>
-              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1">Claude 在回复中应考虑哪些个人偏好？</label>
-              <p className="text-[12px] text-claude-textSecondary/60 mb-2">
-                你的偏好将应用于所有对话。
-                {/* 【2026-09-20 用户反馈「回复偏好可能与 style 冲突」】
-                    确认：这个字段和 /style（输出风格）都在讲"怎么回复"，
-                    同时注入会让模型收到两份可能矛盾的指令。
-                    现在**这个字段不再注入 systemPrompt**，回复方式统一由 /style 管
-                    （CLI 也是这套，两端一致）。这里给用户一句指引，免得填了没效果还不知道。
-                    字段本身保留：不删数据结构，老配置不报错。 */}
+                希望 AI 怎么回复你？应用于所有对话，下一轮生效。
                 <span className="block mt-1 text-claude-textSecondary/50">
-                  注：调整回复方式请用 <code className="font-mono text-claude-text">/style</code>
-                  （内置 default / Explanatory / Learning，也可自定义）。此处的偏好目前已不再注入，
-                  填写不会改变回复。
+                  也可以用 <code className="font-mono text-claude-text">/style &lt;自由文本&gt;</code> 设置（CLI/Web 通用）。
                 </span>
               </p>
               <textarea

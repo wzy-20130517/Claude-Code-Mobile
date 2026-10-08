@@ -136,7 +136,7 @@ export const COMMAND_DESCRIPTIONS = {
   imagegen: '生图配置：配完直接说「画一张…」',
   name: '改显示名（改编号用 /config provider）',
   effort: '思考强度（每 Provider 独立）',
-  style: '输出风格（回复方式；可自定义 .claude/output-styles/）',
+  style: '回复偏好（/style <自由文本>；与 /me 同字段）',
   me: '用户资料（称呼/职业/偏好；注入提示词）',
   github: 'GitHub 工具集（仓库/issue/PR 读写）',
   tasks: '持久待办（跟轮内 todo 不是一回事）',

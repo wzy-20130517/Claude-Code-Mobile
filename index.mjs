@@ -73,7 +73,10 @@ import { InputHistory, CommandExecTool, UserInputHistoryTool, MemoryTool, setMem
 import { cmdAgents } from './core/commands/cmd-agents.mjs'
 import { cmdContext, cmdDiff, cmdDoctor, cmdStats, cmdMemory, cmdReview, cmdPermissions, cmdTemperature, cmdConfig, persistActivePoolKey, syncActiveProvider, recordConfigEvent, drainConfigEvents } from './core/commands/cmd-extensions.mjs'
 import { getWorkspacePath, setWorkspacePath } from './core/infra/workspace.mjs'
-import { listOutputStyles, getOutputStyle, ensureOutputStylesDir, DEFAULT_OUTPUT_STYLE_NAME } from './core/ui/output-styles.mjs'
+// 【2026-10-08 合并】原来这里还 import 了 listOutputStyles / getOutputStyle /
+// ensureOutputStylesDir / DEFAULT_OUTPUT_STYLE_NAME —— /style 改为操作回复偏好后
+// 这些在 index.mjs 里已无引用（output-styles.mjs 本身保留，cmd-style 的
+// `list` 子命令和 Web 侧仍在用）。
 import { loadUserProfile, setProfileField, buildUserProfileSection, getUserProfilePath, PROFILE_FIELDS } from './core/session/user-profile.mjs'
 import { makeQueryCommands, makeSessionCommands } from './core/commands/cmd-queries.mjs'
 import { makeSessionExtraCommands } from './core/commands/cmd-session-extra.mjs'
@@ -1120,20 +1123,21 @@ async function main() {
     + `\n\n# 当前权限模式: ${permManager.getMode()}\n装饰性工具 (${[...DECORATIVE_TOOLS].join(', ')}) 在 default 模式下被硬拒绝，除非 /permissions allow <名>。\n`
   const incognitoPrompt = `\n\n# Incognito 隔离会话\n- 本会话不加载任何 CLAUDE.md。\n- 禁止读取、搜索、列举、修改或通过 shell/git/子 agent 间接访问 ${protectedProjectRoot}。\n- 全局 passive skills 仍然生效。\n`
   /**
-   * 取当前生效的输出风格段（替换 SYSTEM_PROMPT 里的 {{OUTPUT_STYLE}}）。
+   * 取当前生效的回复方式段（替换 SYSTEM_PROMPT 里的 {{OUTPUT_STYLE}}）。
    *
-   * 【替换而不是追加】——用户设 /style 的意图是"换一种说话方式"，
-   * 如果默认那段「直接、简洁、中文优先」还留在提示词里，两段指令会打架：
-   * 比如选了「详细讲解」风格，模型仍被另一段要求"回复简短"。
-   * 所以设了风格就整段换掉，没设才用默认值。
+   * 【2026-10-08 合并】原来这里读 config.outputStyle（输出风格），现已并入
+   * 回复偏好（profile 的 personal_preferences）。两者本就回答同一个问题
+   * 「希望 AI 怎么回复我」，用户视角是一件事。
+   *
+   * 【替换而不是追加】用户填回复偏好的意图是"换一种说话方式"，
+   * 如果默认那段「直接、简洁、中文优先」还留着，两段指令可能打架：
+   * 比如填了「详细讲解」，模型仍被另一段要求"回复简短"。
+   * 所以有偏好就整段换掉，没填才用默认值。
    */
   const outputStyleSection = () => {
     try {
-      const st = getOutputStyle(config.outputStyle)
-      if (st && st.prompt) {
-        // 自定义风格：正文即提示词；带一行来源说明，便于用户确认生效的是哪份
-        return `${st.prompt}\n\n（当前输出风格：${st.name}${st.path ? ` · ${st.path}` : ''}）`
-      }
+      const prefs = (loadUserProfile().personal_preferences || '').trim()
+      if (prefs) return prefs
     } catch {}
     return DEFAULT_OUTPUT_STYLE_SECTION
   }
@@ -2971,7 +2975,14 @@ async function main() {
     setWorkspacePath,
     // 工作区/资料改了 → 系统提示词要重算，否则模型看不到新值
     onWorkspaceChanged: () => { agent.systemPrompt = getCurrentSystemPrompt() },
-    onProfileChanged: () => { try { invalidateSystemPromptSection('base') } catch {} },
+    // 【2026-10-08 修】原来只清段缓存 —— 但 agent.systemPrompt 是**构造时快照**
+    //（agent.mjs:79 值赋值，请求时直接用它），清了缓存也不会重取 →
+    // 「改了回复偏好/资料，本会话内模型看不到，要等下次重启」。
+    // 与 onWorkspaceChanged 同款处理：清缓存 + 立即重取。
+    onProfileChanged: () => {
+      try { invalidateSystemPromptSection('base') } catch {}
+      try { agent.systemPrompt = getCurrentSystemPrompt() } catch {}
+    },
     isIncognito: () => incognitoMode,
     cwd: () => process.cwd(),
     mcpPath: MCP_PATH,
@@ -3043,15 +3054,21 @@ async function main() {
     fsSession: () => fsSession,
   })
 
-  // /style —— 输出风格（CLI/Web 共用 core/cmd-style.mjs）
+  // /style —— 回复偏好（CLI/Web 共用 core/cmd-style.mjs）
+  // 【2026-10-08 合并】原来 /style 操作 config.outputStyle（输出风格下拉）；
+  // 现在直接读写 profile 的 personal_preferences（与 APK 侧合并方向一致）。
+  // onProfileChanged：清缓存 + 重取 agent.systemPrompt（后者是构造时快照，
+  // 不重取的话「改完偏好本会话内模型看不到」—— 与 systemConfigCommands
+  // 的 onProfileChanged 同款处理）。
   const styleCommand = makeStyleCommand({
     C,
     config,
     saveConfig,
     cwd: () => process.cwd(),
-    runSelect,
-    rl: () => rl,
-    fsSession: () => fsSession,
+    onProfileChanged: () => {
+      try { invalidateSystemPromptSection('base') } catch {}
+      try { agent.systemPrompt = getCurrentSystemPrompt() } catch {}
+    },
   })
 
   // /markdown —— 渲染样式切换（经典 / 官方）
@@ -3845,8 +3862,8 @@ async function main() {
         return systemConfigCommands.me(args)
 
       case 'style':
-        // 输出风格变了 → base 段（含 {{OUTPUT_STYLE}} 替换）要重算
-        try { invalidateSystemPromptSection('base') } catch {}
+        // 【2026-10-08 合并】/style 现在操作回复偏好（profile 字段）——
+        // 提示词缓存失效由命令内部的 onProfileChanged 回调负责（已接）。
         // 实现抽到 core/cmd-style.mjs（Web 端也要用同一份，见该文件顶部说明）
         return await styleCommand.style(args)
 
@@ -4624,12 +4641,13 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
           personal_preferences: '回复偏好（必须遵守）',
         },
       },
-      // 输出风格（/style）：候选是动态的（取决于 .claude/output-styles/ 下有哪些文件），
-      // 这里只给固定的两个开关项；具体风格名由命令自身在无参时列出。
+      // 回复偏好（/style）：/style <自由文本> 设置，/style clear 清空，
+      // /style list 列旧风格模板（只读参考）。
       style: {
-        candidates: ['off'],
+        candidates: ['clear', 'list'],
         desc: {
-          off: '回到默认（无额外风格提示词）',
+          clear: '清空回复偏好',
+          list: '查看旧的输出风格模板（只读）',
         },
       },
       help: {

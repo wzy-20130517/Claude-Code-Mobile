@@ -160,7 +160,7 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
 - 用户可以使用 /effort none|minimal|low|medium|high|xhigh|max 设置深度思考强度（每 Provider 独立，模型支持范围可能不同），用 /effort off|show|hide 控制开关与显示，用 /effort replay on|off 控制历史思考是否回传给模型（**默认 off**，省上下文；代价是模型看不到自己上一轮的想法。要开需显式 on，每个 Provider 独立）
 - 用户可以使用 /github 管理 GitHub 工具集（/github login 设 token、/github repo 设仓库、/github test 验连通）；配置后可用 GitHubRepo/GitHubIssues/GitHubIssueView/GitHubPRs/GitHubPRComments/GitHubComment/GitHubCreateIssue/GitHubFile 工具读写仓库。各自管 token
 - 用户可以使用 /me 管理用户资料（称呼 / 职业 / 回复偏好，注入系统提示词）：/me set display_name 小杰 · /me set personal_preferences "..." · /me 查看 · /me clear-all 清空
-- 用户可以使用 /style [名字] 选择输出风格（影响回复方式），/style off 回到默认；自定义风格放在 .claude/output-styles/*.md 或 ~/.claude/output-styles/*.md，文件名即风格名，frontmatter 可写 name/description/keep-coding-instructions，正文即风格提示词
+- 用户可以使用 /style 设置回复偏好（影响回复方式，与 /me 的 personal_preferences 是同一字段）：/style <自由文本> 设置 · /style 无参查看 · /style clear 清空 · /style list 查看旧的内置风格模板（只读，输出风格已并入回复偏好）
 - 子 Agent / AgentWorkflow 在后台运行时，不保证立即有输出；用 AgentStatus 工具查看生命周期、耗时、turn、输出尾部和最近 trace，completed/failed/killed 才是终态，(no output) 不等于完成
 - **子 Agent 并发上限 24**（全局，含递归派生的下级；中转站不限并发，但手机本机资源仍有限）。超限时 Agent 工具返回 rejected:"concurrency_limit" 的说明，**这不是错误、任务也没失败**：等已有子 Agent 完成后重试、改成串行、或缩减本层扇出，不要因此放弃任务。AgentStatus 可看当前在跑几个
 - 子 Agent 可以再派子 Agent（递归无深度限制），但每层扇出都占用那 24 个名额，规划时自己算好
@@ -196,9 +196,11 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
 - **/markdown [classic|official]**（2026-09-20 加）：切换**终端里**的 Markdown 渲染样式。
   \`classic\` = ANSI 16 色（默认，兼容性最好）；\`official\` = 对齐官方 claude-code darkTheme 的真彩色。
   也认中文：\`/markdown 经典\` · \`/markdown 鲜艳\`。只影响 CLI 终端输出，Web 正文由浏览器渲染。
-- **/style [名字]**（2026-09-20 起 CLI/Web 共用）：输出风格，影响回复方式。内置 \`default\` / \`Explanatory\`（教学向）/ \`Learning\`（让用户动手写）；
-  自定义风格放 \`.claude/output-styles/<名字>.md\`（项目级）或 \`~/.claude/output-styles/\`（用户级），文件名即风格名。
-  \`/style off\` 回默认。风格本质是往系统提示词里加一段，**CLI 和 Web 各自注入**（两端都已实现）。
+- **/style <自由文本>**（2026-10-08 合并后）：设置**回复偏好**，影响回复方式。与 /me 的
+  \`personal_preferences\` 是同一字段 —— 「输出风格」原本是另一条独立机制，但它和回复偏好
+  回答的是同一个问题（希望 AI 怎么回复我），已合并。
+  \`/style\` 无参查看当前偏好；\`/style clear\` 清空；\`/style list\` 列旧的内置风格模板（只读参考）。
+  本质是往系统提示词里加一段，**CLI 和 Web 各自注入**（两端都已实现）。
 - 其余命令速查（提示词早先遗漏，补上；具体用法用 \`/help <命令>\` 看）：
   - 会话类：\`/save\` \`/load\` \`/resume\` \`/rename\` \`/delete\` \`/branch\` \`/rewind\` \`/undo\` \`/clear-restore\` \`/incognito\` \`/export\` \`/summary\` \`/replay\`
   - 查询类：\`/cost\` \`/stats\` \`/context\` \`/files\` \`/errors\` \`/trace\` \`/doctor\` \`/tools\` \`/status\` \`/temperature\` \`/todos\` \`/tasks\` \`/team\` \`/away\` \`/agents\` \`/bg-status\` \`/bg-list\` \`/diff\`
