@@ -316,6 +316,55 @@ export class FullscreenRenderer {
   }
 
   /**
+   * 【2026-10-08 新增】上翻状态下的「编辑锚点」快照 —— 供
+   * updateBodyLine / replaceBodyLines 补偿视角用（贴底时返回 null，零开销）。
+   *
+   * 快照三要素（都在修改前计算）：
+   *   · editPos  修改点（第 idx 条逻辑行）在**折行后**的物理行号
+   *   · start    当前视口顶部物理行号
+   *   · total    当前总物理行数
+   *
+   * 【为什么要区分「修改点在视口上方 / 下方」】
+   * 追加类操作（appendBody / updateLiveBlock）的修改点恒在末尾，无脑
+   * scroll += Δ 就对了；但替换 / 改写类操作的修改点可以在视口上方
+   * （工具结果写回工具行位置时，工具行常常在用户正在看的内容之上），
+   * 两种情形规则相反：
+   *   · 修改点在视口上方（editPos < start）：**不补偿** —— start 公式
+   *     `total - bodyH - scroll` 里 total 增大 Δ 会让 start 同步后移 Δ，
+   *     视口自动跟住原内容；补偿反而把视口往下推 Δ 行。
+   *   · 修改点在视口内 / 下方（editPos >= start）：**补偿 scroll += Δ** ——
+   *     修改点之后的内容被推走 Δ 行，不补偿视口就被拽走 Δ 行。
+   *
+   * @returns {{editPos:number,start:number,total:number}|null}
+   */
+  _editAnchorBefore(idx) {
+    if (this.bodyScroll <= 0) return null;
+    const wrapped = this._wrappedBody();   // 折行到最新，_wrapSpans 才有完整记录
+    const total = wrapped.length;
+    const start = Math.max(0, total - this._bodyHeight() - this.bodyScroll);
+    const prefixLen = total - this._wrapCache.length;   // bodyPrefix 占的物理行
+    let editPos = prefixLen;
+    for (let i = 0; i < idx; i++) editPos += this._wrapSpans[i] || 0;
+    return { editPos, start, total };
+  }
+
+  /**
+   * 与 _editAnchorBefore 配对：修改完成后调用，按锚点决定是否补偿 bodyScroll。
+   * anchor 为 null（贴底 / 无锚点）时什么都不做。
+   */
+  _compensateEdit(anchor) {
+    if (!anchor) return;
+    // 修改点在视口上方：total 增大 Δ 让 start 自动后移 Δ，视口已跟住原内容，
+    // 补偿反而把视口往下推。直接返回（也省掉一次重折缓存）。
+    if (anchor.editPos < anchor.start) return;
+    const after = this._wrappedBody();
+    const delta = after.length - anchor.total;
+    if (delta === 0) return;
+    const max = Math.max(0, after.length - this._bodyHeight());
+    this.bodyScroll = Math.min(max, Math.max(0, this.bodyScroll + delta));
+  }
+
+  /**
    * 就地改写第 idx 条逻辑行（用于工具行变色：执行中灰 → 成功绿/失败红）。
    *
    * 【为什么需要】官方 ToolUseLoader.tsx:20 是
@@ -334,11 +383,16 @@ export class FullscreenRenderer {
     // bodyLines 超过 MAX_BODY_LINES 时头部会被 splice 掉、行号整体前移 ——
     // 此时旧行号会指向别的行，靠内容校验挡住（工具名唯一性够用）。
     if (expectContains && !String(this.bodyLines[idx]).includes(expectContains)) return false;
+    // 【2026-10-08 修：上翻时补偿视角】原来改写行数变化（如短行变超长行折行
+    // 1→3 行）不补偿 bodyScroll，工具行变色时视角被拽几行。锚点判据见
+    // _editAnchorBefore 的注释（修改点在视口上方时不能补偿）。
+    const anchor = this._editAnchorBefore(idx);
     this.bodyLines[idx] = String(text);
     // 该行及其之后的折行缓存全部作废：下标对齐被破坏，必须从 idx 起重折。
     // （只影响尾部若干行，且工具行通常不折行，成本可忽略）
     this._truncateWrapCache(idx);
     this._openLine = false;
+    this._compensateEdit(anchor);
     return true;
   }
 
@@ -365,10 +419,16 @@ export class FullscreenRenderer {
     if (expectContains && !String(this.bodyLines[idx]).includes(expectContains)) return null;
     const arr = Array.isArray(lines) ? lines.map(l => String(l)) : [String(lines)];
     const delta = arr.length - 1;
+    // 【2026-10-08 修：上翻时补偿视角】工具结果写回（1 行 → 多行）改变总行数
+    // 时不补偿 bodyScroll，视口被拽。锚点判据见 _editAnchorBefore 的注释
+    // ——注意此处不能无脑 `bodyScroll += delta`：工具行在视口上方时，
+    // 补偿反而把视口往下推（追加类操作无脑补偿是因为修改点恒在末尾）。
+    const anchor = this._editAnchorBefore(idx);
     this.bodyLines.splice(idx, 1, ...arr);
     // 该行及其之后的折行缓存全部作废（下标对齐被破坏）
     this._truncateWrapCache(idx);
     this._openLine = false;
+    this._compensateEdit(anchor);
     return delta;
   }
 
