@@ -2624,15 +2624,15 @@ async function runMessage(runtime, content, attachments = []) {
     emit(runtime, 'modes', { plan: !!runtime.toolkit?.planMode?.enabled, deep: !!runtime.toolkit?.deepMode?.enabled, maxTurns: runtime.toolkit?.deepMode?.getMaxTurns?.() || null })
     // 【2026-10-08 加】自动压缩（与 CLI 同源 core/session/auto-compact.mjs）。
     // 之前 Web 只接了手动 /compact —— 用户设了阈值也没用（Web 侧压根不触发）。
-    // 默认关闭：isAutoCompactEnabled() 为 false 时 autoCompact 内部直接 return。
+    // 直接调 autoCompact：它内部第一步就是 shouldCompact（含开关与阈值判定），
+    // 没设阈值时零开销返回 false —— 这里**不要**再加一层 isAutoCompactEnabled
+    // 门卫（多余，且曾因该函数不刷新配置而误拦，见 auto-compact.mjs 的注释）。
     try {
-      const { autoCompact, isAutoCompactEnabled } = await import('../core/session/auto-compact.mjs')
-      if (isAutoCompactEnabled()) {
-        await autoCompact(agent, runtime.compactService, {
-          print: (text) => emit(runtime, 'notice', { text: String(text).replace(/\x1b\[[0-9;]*m/g, '') }),
-        })
-        runtime.history = agent.getHistory()
-      }
+      const { autoCompact } = await import('../core/session/auto-compact.mjs')
+      await autoCompact(agent, runtime.compactService, {
+        print: (text) => emit(runtime, 'notice', { text: String(text).replace(/\x1b\[[0-9;]*m/g, '') }),
+      })
+      runtime.history = agent.getHistory()
     } catch (e) {
       console.warn('[web] autoCompact 失败:', e?.message || e)
     }

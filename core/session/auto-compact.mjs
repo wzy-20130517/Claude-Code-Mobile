@@ -100,12 +100,21 @@ let cachePolicy = { ...DEFAULT_CACHE_POLICY, ..._cp, enabled: false } // 永远�
 //
 // 【共享配置的意义】CLI 和 Web 读同一份 config.json —— mtime 热更新对
 // 两边同时生效：Web 设置页改了阈值，CLI 侧下一轮就能看到（反之亦然）。
+//
+// 【2026-10-08 加固：mtime + size 双判据】实测本机（Termux/Android）的
+// mtimeMs 分辨率约 10ms —— 连写 10 次 config，9 次的 mtimeMs 完全相同，
+// 单靠 mtime 会把「同毫秒窗口内的写入」判成没变。加 size 作为第二判据：
+// 改阈值（数字位数变化）几乎必然改变文件大小，能盖住绝大多数情况。
+// 仍未覆盖的极端（同毫秒 + 同字节数，如 500000→600000）现实中不会发生
+// （人手操作最快也要几百毫秒），不值得为此每轮读盘解析。
 let _lastCfgMtime = -1
+let _lastCfgSize = -1
 function refreshIfChanged() {
   try {
-    const m = statSync(CONFIG_PATH).mtimeMs
-    if (m === _lastCfgMtime) return
-    _lastCfgMtime = m
+    const st = statSync(CONFIG_PATH)
+    if (st.mtimeMs === _lastCfgMtime && st.size === _lastCfgSize) return
+    _lastCfgMtime = st.mtimeMs
+    _lastCfgSize = st.size
     const fresh = loadThresholds()
     tokenLimit = fresh.tokenLimit
     messageLimit = fresh.messageLimit
@@ -121,8 +130,17 @@ export function getCachePolicy() {
   return { ...cachePolicy, maxContextTokens: maxContext, enabled: false }
 }
 
-/** 是否允许自动压缩：仅当设置了固定阈值 */
+/** 是否允许自动压缩：仅当设置了固定阈值。
+ *
+ * 【2026-10-08 修】原来直接读模块变量 —— 不刷新配置。
+ * 与 getTokenLimit 等不同，它没调 refreshIfChanged()，而 tokenLimit 只在
+ * 那些 getter 被调用时才更新。调用链 autoCompact → shouldCompact →
+ * isAutoCompactEnabled 中间没人调 getter，于是运行中改阈值（/compact-threshold
+ * 或 Web 设置页）后本判断仍读进程启动时的旧值 —— 表现为「设了阈值不生效」。
+ * 与 2026-10-06 修的是同族 bug（那次只修了 getter，漏了这个判定函数）。
+ */
 export function isAutoCompactEnabled() {
+  refreshIfChanged()
   return tokenLimit > 0 || messageLimit > 0
 }
 
