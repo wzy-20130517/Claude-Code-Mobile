@@ -3859,10 +3859,10 @@ async function main() {
       // 配置项列表里没有 userName/nickname 这类键。但我们的 web 端已经有这套字段，
       // 终端里同样需要（用户不想每次都去网页填）。
       //
-      // 与 /style 的分工：
-      //   /style  → 影响**怎么说话**（输出风格，可换可自定义）
-      //   /profile → 影响**对你说话**（称呼、职业、个人偏好）
-      // 两者都注入系统提示词，但语义不同，所以不合并成一个命令。
+      // 【2026-10-08 合并】原来 /style 与 /me 是两套（前者「怎么说话」=输出风格，
+      // 后者「对你说话」=称呼/职业/偏好）。后来发现「输出风格」和
+      // personal_preferences 回答的是同一个问题（希望 AI 怎么回复我），
+      // 已合并为**同一字段**：/style 直接读写 profile.personal_preferences。
       case 'me':
         // 【2026-10-05 搬】实现移到 core/commands/cmd-system-config.mjs
         // （提示词段失效由模块的 onProfileChanged 回调处理）。
