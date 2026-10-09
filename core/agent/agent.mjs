@@ -61,7 +61,7 @@ function looksLikeCompleteJson(s) {
 }
 
 export class Agent {
-  constructor({ api, visionApi = null, systemPrompt, tools, maxTurns = NORMAL_MAX_TURNS, onText, onReasoning, onToolUse, onToolArgsPreview, onToolProgress, onToolResult, onError, onPermissionRequest, onTodoUpdate, onUsage, onTurnEnd, onTurnLimitApproaching, beforeToolCall = null, logger, undoStore, useStream, pullSteering, traceEnabled = true, traceDir = null, traceParentRunId = null, streamWatchdogMs = 300000, cwd = null, sessionId = null }) {
+  constructor({ api, visionApi = null, systemPrompt, tools, maxTurns = NORMAL_MAX_TURNS, onText, onReasoning, onToolUse, onToolArgsPreview, onToolProgress, onToolResult, onError, onPermissionRequest, onTodoUpdate, onUsage, onTurnEnd, onTurnLimitApproaching, beforeToolCall = null, beforeApiRequest = null, logger, undoStore, useStream, pullSteering, traceEnabled = true, traceDir = null, traceParentRunId = null, streamWatchdogMs = 300000, cwd = null, sessionId = null }) {
     this.api = api
     // 【让 api 层的内部重试进 trace】
     // api.request() 自己会按 maxRetries 重试，但 trace 里只有 agent 记的那一条
@@ -122,6 +122,28 @@ export class Agent {
      * 由 index.mjs 注入（它持有 compactService）。
      */
     this.beforeToolCall = beforeToolCall
+    /**
+     * beforeApiRequest: async (agent) => void —— **每次发 API 请求之前**调用。
+     *
+     * 【为什么需要它（2026-10-09）】
+     * 用户报「压缩时机不对，应该在发 API 请求前，而不是调工具前」。
+     *
+     * 原来的自动压缩挂在 beforeToolCall（工具调用前），错位有三：
+     *   1. **收益错配**：压缩是为了让**下一次 API 请求**别超上下文；
+     *      工具执行本身不消耗上下文 —— 在工具前压缩，压完还要接着跑工具、
+     *      工具结果又撑大历史，白压。
+     *   2. **纯文本轮次永远不触发**：模型不调工具时（纯回答、收尾汇报）
+     *      压根没有 beforeToolCall，阈值超了也不压。
+     *   3. **触发太频繁**：一次 run 几十个工具调用，得靠 30s 防抖压住；
+     *      而 API 请求前是天然每轮一次，不需要防抖。
+     *
+     * 放在主循环 turn 开头、api_request trace 之前 —— 那一刻的历史就是
+     * 即将发出去的内容，判定与压缩都最准。
+     *
+     * 签名：async (agent) => void（抛异常不影响请求发出，压缩是优化不是前置条件）
+     * 由 index.mjs / web/server.mjs 注入（它们持有 compactService）。
+     */
+    this.beforeApiRequest = beforeApiRequest
     this.undoStore = undoStore || null  // 可选：用于 group 撤销
     this.cwd = cwd || null
     this.sessionId = sessionId
@@ -286,6 +308,25 @@ export class Agent {
             })
           }
         } catch {}
+      }
+
+      // ══════════════════════════════════════════════════════════════════
+      //  发 API 请求前的检查点（2026-10-09：自动压缩从「工具前」挪到「请求前」）
+      // ══════════════════════════════════════════════════════════════════
+      //
+      // 位置为什么是这里：此刻 this.messages 就是**即将发出去的内容**
+      //（队友消息、补充指令都已注入完毕），判定「会不会超上下文」最准；
+      // 压完立刻发请求，中间没有别的环节再撑大它。
+      //
+      // 为什么不在 retry 循环内：压缩是「这一轮」的前置动作，一次就够。
+      // 放循环内会在每次重试前重复评估（重试通常几秒内发生，历史没变，
+      // 白跑判定）；且重试的语义是「同样的请求再发一次」，不该改变请求内容。
+      //
+      // 失败不拦请求（压缩是优化，不是前置条件）—— catch 掉继续发。
+      if (this.beforeApiRequest) {
+        try { await this.beforeApiRequest(this) } catch (e) {
+          try { this._traceEmit('before_api_request_error', { turn: this.turnCount, error: String(e?.message || e) }) } catch {}
+        }
       }
 
       // 网络错误最多重试5次；上下文超限直接报错，不收缩历史（防止旧消息被悄悄丢弃）。

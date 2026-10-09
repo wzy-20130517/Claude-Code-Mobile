@@ -2549,6 +2549,25 @@ async function buildAgent(runtime) {
   }
   // PreToolUse / PostToolUse 由 agent 内部触发；与 CLI 同一份 hooks.json
   agent.hookManager = hookManager
+  // 【自动压缩】与 CLI 同源 core/session/auto-compact.mjs。
+  //
+  // 2026-10-09：从「run 结束后压一次」改成「每次发 API 请求前检查」
+  //（与 CLI 对齐，用户指出压缩时机应在请求前而非工具前/轮末）。
+  // 原来挂在 run 结束处有两个问题：
+  //   · 一次 run 几十轮，只有全部跑完才检查 —— 中途某轮就可能超上下文
+  //   · 纯文本轮次（不调工具）根本不经过检查点
+  // 现在每轮发请求前判定：超阈值就压，压完立刻发，判定最准。
+  // agent.beforeApiRequest 由 agent.mjs 主循环调用（失败不影响请求发出）。
+  agent.beforeApiRequest = async (ag) => {
+    try {
+      const { autoCompact } = await import('../core/session/auto-compact.mjs')
+      await autoCompact(ag, runtime.compactService, {
+        print: (text) => emit(runtime, 'notice', { text: String(text).replace(/\x1b\[[0-9;]*m/g, '') }),
+      })
+    } catch (e) {
+      console.warn('[web] autoCompact 失败:', e?.message || e)
+    }
+  }
   // 把实例交给 toolkit：EnterDeepMode / ExitDeepMode 工具要能立刻改到它，
   // 否则模型自己开 deep 后本轮仍按旧上限被截停（CLI 侧同款 bug 已修）。
   toolkit.attachAgent?.(agent)
@@ -2622,20 +2641,9 @@ async function runMessage(runtime, content, attachments = []) {
     runtime.updatedAt = new Date().toISOString()
     saveRuntime(runtime)
     emit(runtime, 'modes', { plan: !!runtime.toolkit?.planMode?.enabled, deep: !!runtime.toolkit?.deepMode?.enabled, maxTurns: runtime.toolkit?.deepMode?.getMaxTurns?.() || null })
-    // 【2026-10-08 加】自动压缩（与 CLI 同源 core/session/auto-compact.mjs）。
-    // 之前 Web 只接了手动 /compact —— 用户设了阈值也没用（Web 侧压根不触发）。
-    // 直接调 autoCompact：它内部第一步就是 shouldCompact（含开关与阈值判定），
-    // 没设阈值时零开销返回 false —— 这里**不要**再加一层 isAutoCompactEnabled
-    // 门卫（多余，且曾因该函数不刷新配置而误拦，见 auto-compact.mjs 的注释）。
-    try {
-      const { autoCompact } = await import('../core/session/auto-compact.mjs')
-      await autoCompact(agent, runtime.compactService, {
-        print: (text) => emit(runtime, 'notice', { text: String(text).replace(/\x1b\[[0-9;]*m/g, '') }),
-      })
-      runtime.history = agent.getHistory()
-    } catch (e) {
-      console.warn('[web] autoCompact 失败:', e?.message || e)
-    }
+    // 【2026-10-09 挪走】原来这里跑一次 autoCompact（run 结束后）。
+    // 现在压缩统一由 agent.beforeApiRequest 负责（每轮发请求前判定，
+    // 与 CLI 同源同位置）—— 这里再压一次是重复劳动，且时机更晚。
     runtime.runSnapshot = null
     emit(runtime, 'done', { session: sessionPayload(runtime), interrupted: false })
   } catch (error) {

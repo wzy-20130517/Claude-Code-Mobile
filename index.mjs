@@ -48,7 +48,7 @@ import { TodoWriteTool, WebFetchTool, AskUserSimpleTool } from './core/tools/ext
 import { CompactService } from './core/session/compact.mjs'
 import { backupBeforeCompact, listCompactTrash, readCompactTrash, deleteCompactTrash, restoreCompactTrash, TRASH_DIR } from './core/session/compact-trash.mjs'
 import { maybeExtractMemory, getAutoMemStatus, setAutoMemEnabled, markMainWroteMemory } from './core/agent/auto-memory.mjs'
-import { autoCompact, getTokenLimit, getMessageLimit, getMaxContext, setMaxContext, getCachePolicy, setTokenLimit, setMessageLimit, isAutoCompactEnabled, getContextWaterLevel } from './core/session/auto-compact.mjs'
+import { autoCompact, getTokenLimit, getMaxContext, setMaxContext, getCachePolicy, setTokenLimit, setMessageLimit, getContextWaterLevel } from './core/session/auto-compact.mjs'
 import { ClaudeMdLoader, SessionStore } from './core/session/persistence.mjs'
 import { setupAutoSession, DEFAULT_AUTOSAVE_INTERVAL_MS as SESSION_AUTOSAVE_INTERVAL_MS } from './core/session/session-auto.mjs'
 
@@ -1940,8 +1940,6 @@ async function main() {
   // 陪聊模式已移除：不再轮询收件箱主动搭话，QQ 只作为用户下达指令的输入通道。
   // 让模块级 recordError 能拿到当前 agent 历史长度，供 /retry 记录报错点
   globalThis.__agentRef = () => agent
-  /** 上次工具前自动压缩的时间戳（防抖：一次 run 几十个工具调用，不能每个都压） */
-  let _lastAutoCompactAt = 0
 
   agent = new Agent({
     api,
@@ -1973,11 +1971,21 @@ async function main() {
       try { updateFsStatus() } catch {}
     },
     // ══════════════════════════════════════════════════════════════
-    //  工具调用前的上下文检查（2026-10-06 加）
+    //  发 API 请求前的上下文检查（2026-10-09 从「工具前」挪过来）
     // ══════════════════════════════════════════════════════════════
     //
-    // 用户需求：「Agent 每次动作之前，检查上下文是否超过 600k，
-    // 如果超过了就执行 /compact 100 并继续工作」。
+    // 用户需求（2026-10-06）：「Agent 每次动作之前，检查上下文是否超过阈值，
+    // 如果超过了就执行压缩并继续工作」——当时实现成了 beforeToolCall。
+    //
+    // 用户纠正（2026-10-09）：「压缩时机不对，应该在发 API 请求前，
+    // 而不是调工具前。」——对。压缩的收益是让**下一次 API 请求**别超上下文，
+    // 工具执行本身不消耗上下文；在工具前压，压完接着跑工具、结果又撑大历史，
+    // 白压。而且纯文本轮次（模型不调工具时）压根不会触发。
+    //
+    // 现在挂在 beforeApiRequest（agent 主循环里、发请求之前那一刻）：
+    //   · 此刻的历史 = 即将发出的内容，判定最准
+    //   · 每个 turn 天然只检查一次，不需要时间防抖（原来是 30s）
+    //   · 压缩后立刻发请求，中间无环节再撑大历史
     //
     // 为什么放这里而不是 hook：hook 是外部脚本，只能返回 DENY/INJECT，
     // **没法真正压缩**（压缩要改 agent 的历史，是进程内操作）。
@@ -1990,26 +1998,25 @@ async function main() {
     // 用的是 autoCompact()（已含备份、策略选择、断路器），
     // 不是硬编码「/compact 100」—— 那个参数只是保留尾部条数，
     // 而 autoCompact 会按压力自动挑策略（micro 优先，零 API）。
-    beforeToolCall: async (ag) => {
+    beforeApiRequest: async (ag) => {
       try {
         const tokens = ag.getLastPromptTokens?.() || 0
         const limit = getTokenLimit()
         // 没开自动压缩（limit=0）或没超阈值 → 不动
         if (limit <= 0 || tokens <= limit) return
-        // 同一轮里刚压过就不再压（防抖：一次 run 有几十个工具调用）
-        const now = Date.now()
-        if (now - _lastAutoCompactAt < 30_000) return
-        _lastAutoCompactAt = now
-        const before = ag.getHistory().length
-        await autoCompact(ag, compactService, {
+        // PreCompact/PostCompact hooks 跟着压缩走（原来挂在 run 结束处，
+        // 那个触发点已随 autoCompact 一起挪走，hooks 不能丢）。
+        try { await hookManager.trigger('PreCompact', { event: 'PreCompact', tokenCount: tokens, tokenLimit: limit }) } catch {}
+        const compacted = await autoCompact(ag, compactService, {
           print: (text) => { try { emit(`${text}\n`) } catch {} },
         })
-        const after = ag.getHistory().length
-        if (after !== before) {
-          try { updateFsStatus() } catch {}
-        }
+        if (!compacted) return
+        // 压缩后 token 基线已经变化，同步给状态条，避免把它误显示成异常波动
+        _prevApiTokens = ag.getLastPromptTokens?.() || 0
+        try { updateFsStatus() } catch {}
+        try { await hookManager.trigger('PostCompact', { event: 'PostCompact', tokenCount: ag.getLastPromptTokens?.() || 0, tokenLimit: limit }) } catch {}
       } catch (e) {
-        crashLog('before-tool-compact', e)
+        crashLog('before-api-compact', e)
       }
     },
     onReasoning: (text) => {
@@ -6416,21 +6423,16 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
       // 被打断的轮次不显示：没跑完谈不上「Worked for」。
       if (!userInterrupted) emitTurnDuration(start)
       saveSession()
-      // PreCompact / PostCompact hooks
-      const lastPromptTokens = agent.getLastPromptTokens?.() || 0
       // 全屏模式：刷新常驻状态行（上下文用量 + 模型）
       updateFsStatus()
       // 一轮答完，顶部吉祥物蹦一下（官方 JUMP_WAVE）
       try { fsSession?.playClawd('jump') } catch {}
-      await hookManager.trigger('PreCompact', { event: 'PreCompact', tokenCount: lastPromptTokens, tokenLimit: getTokenLimit() })
-      await autoCompact(agent, compactService, {
-        // 自动压缩提示和失败提示都走全屏 body；非全屏仍用 stdout。
-        print: (text) => emit(`${text}\n`),
-      })
-      // 压缩后 token 基线已经变化，不能把下一次下降误认为换 key。
+      // 【2026-10-09 挪走】原来这里跑一次 autoCompact（run 结束后）。
+      // 现在压缩统一由 agent 的 beforeApiRequest 钩子负责（每轮发请求前判定，
+      // 判定最准、压完立刻发）—— 这里再压一次是重复劳动，且时机更晚。
+      // 保留的只有一件事：**同步 token 基线**。压缩会让 lastPromptTokens
+      // 大幅下降，不在这里对齐的话，下一轮状态条会把它误显示成异常波动。
       _prevApiTokens = agent.getLastPromptTokens?.() || 0
-      updateFsStatus()
-      await hookManager.trigger('PostCompact', { event: 'PostCompact', tokenCount: lastPromptTokens, tokenLimit: getTokenLimit() })
     } catch (e) {
       // 旧 run（已被新 run 顶替）：不碰 UI 状态，但错误必须可见——不能静默消失
       if (myEpoch !== runEpoch) {
