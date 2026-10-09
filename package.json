@@ -1,6 +1,6 @@
 {
   "name": "claude-code-mobile",
-  "version": "0.8.249",
+  "version": "0.8.250",
   "private": true,
   "type": "module",
   "scripts": {
