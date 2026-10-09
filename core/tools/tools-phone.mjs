@@ -1531,12 +1531,14 @@ export class PhoneAppTool extends Tool {
  * 但实际操作手机时，大量场景需要的是**任意 shell**：
  *
  *   pkill -f ccm-vd                          重启副屏进程
- *   am start --display 39 -n com.ccm.app/... 指定屏启动（phone_app 只能按当前模式）
  *   pm list packages | grep ccm              找包名
  *   run-as com.ccm.app cat files/install.log 读应用私有文件
  *   adb connect 127.0.0.1:5555               修通道
  *   settings get global xxx                  读系统设置
  *   dumpsys ...                              任意诊断
+ *
+ * ⚠️ **界面操作（am start / input tap 等）不要在这里写** —— 用专用 phone 工具
+ * （phone_app / phone_click / phone_type），它们遵循当前模式的目标屏，不会搞错屏。
  *
  * 没有这个工具时，我只能绕路：
  *     Bash → node -e "import('../phone/device.mjs').then(m => m.runShell('...'))"
@@ -1553,9 +1555,12 @@ export class PhoneShellTool extends Tool {
   constructor() {
     super({
       name: 'phone_shell',
-      description: '在 Android 系统里执行 shell 命令（uid=2000 shell，可 am/pm/dumpsys/input/screencap/run-as）。'
-        + '与 Bash 工具的区别：Bash 跑在 Termux 里（读写文件），本工具跑在 Android 系统里（操作手机）。'
-        + '典型用途：pkill 重启进程、am start 指定屏启动、pm list 找包名、run-as 读应用私有文件、settings/dumpsys 诊断。'
+      description: '在 Android 系统里执行 shell 命令（uid=2000 shell）。'
+        + '**这是诊断通道，不是界面操作通道** —— 点击/输入/滑动/启动 App 等界面操作'
+        + '一律用专用工具（phone_click / phone_type / phone_app / phone_screenshot），'
+        + '它们遵循当前模式的目标屏（前台=主屏 / 后台=副屏），不会搞错屏；'
+        + '不要在这里手写 am start / input tap 这类命令。'
+        + '典型用途：pkill 重启进程、pm list 找包名、run-as 读应用私有文件、settings/dumpsys 诊断。'
         + '通道自动选（Shizuku 优先，失败落 adb 回环）。',
       input_schema: {
         type: 'object',
@@ -1701,9 +1706,24 @@ export class PhoneDeviceTool extends Tool {
 
     // status：一次拿全
     const lines = []
+    // 【2026-10-09 修】目标屏按「有效模式」推算 —— 原来直接调 targetDisplay()，
+    // 而 sessionMode 未定时它按 idle 返回 -1，显示「（无，idle 模式）」，
+    // 与用户设的偏好自相矛盾（设了主屏却报无目标屏），Agent 会被带偏。
+    const effMode = sessionMode || (() => {
+      const p = getPhoneModePreference()
+      return (p === 'foreground' || p === 'background') ? p : null
+    })()
     try {
-      const disp = await targetDisplay()
-      lines.push(`目标屏: ${disp >= 0 ? disp : '（无，idle 模式）'}`)
+      if (effMode === 'foreground') {
+        lines.push('目标屏: 0（主屏）')
+      } else if (effMode === 'background') {
+        // ⚠️ 不能调 targetDisplay() —— 它依赖 sessionMode，null 时按 idle 返回 -1。
+        // 这里直接查副屏本身。
+        const vd = await vdAlive(1200).catch(() => ({ alive: false }))
+        lines.push(`目标屏: ${vd.alive && vd.displayId > 0 ? vd.displayId : '（副屏未建；后台模式需要虚拟屏）'}`)
+      } else {
+        lines.push('目标屏: （未定 —— 首次用手机工具时会弹框询问）')
+      }
     } catch { lines.push('目标屏: 获取失败') }
     // 【2026-10-05 修】原来只显示 sessionMode（本次会话内存值），而 sessionMode
     // 要等首次调用手机工具时才由 ensurePhoneMode() 初始化。用户设了偏好
@@ -1760,16 +1780,16 @@ export class PhoneHandoffTool extends Tool {
     super({
       name: 'phone_handoff',
       description: '跨屏接力：把某个屏上正在运行的 App 整体搬到另一个屏。'
-        + '\n【典型场景】用户在主屏开着某个 App，你要操作它但不想占他屏幕 —— '
+        + '\n【典型场景】后台模式（操作副屏）时，用户主屏开着某个 App，你要操作它但不想占他屏幕 —— '
         + '先 phone_handoff 把它迁到副屏，再在副屏操作。'
         + '\n【与 phone_app 的区别】phone_app 是「在新屏重新启动」（会重走启动流程、可能丢状态）；'
         + 'phone_handoff 是「把正在跑的 task 整体搬过去」（状态完整保留）。'
-        + '\n【参数】省略 from/to 时：from 默认主屏(0)，to 默认副屏。',
+        + '\n【参数】省略 from/to 时：from 默认主屏(0)，to 默认跟随当前模式（前台=主屏 / 后台=副屏）。',
       input_schema: {
         type: 'object',
         properties: {
           from: { type: 'number', description: '源屏 display id，默认 0（主屏）' },
-          to: { type: 'number', description: '目标屏 display id，默认副屏' },
+          to: { type: 'number', description: '目标屏 display id，默认跟随当前模式（前台=主屏 / 后台=副屏）' },
           package: { type: 'string', description: '可选：指定搬哪个包（默认搬源屏最顶层的 App）' },
         },
       },
@@ -1780,13 +1800,29 @@ export class PhoneHandoffTool extends Tool {
     const from = Number.isFinite(input.from) ? input.from : 0
     let to = Number.isFinite(input.to) ? input.to : null
 
-    // 目标屏默认副屏
+    // 目标屏默认跟随当前模式（【2026-10-09 修】原来无脑默认副屏 ——
+    // 前台模式下 Agent 调 handoff 也会把 App 往副屏搬，与用户选的模式相悖）。
+    // 前台模式 → 目标屏 = 主屏 0（与默认 from=0 相同 → 走下方「无需接力」分支）。
+    // sessionMode 未定时回退读偏好（与 phone_device 同款逻辑）。
+    const effMode = sessionMode || (() => {
+      const p = getPhoneModePreference()
+      return (p === 'foreground' || p === 'background') ? p : null
+    })()
     if (to === null) {
-      const a = await vdAlive(3000).catch(() => ({ alive: false }))
-      if (!a.alive) return '副屏未运行，无法接力。先用 phone_vd start 启动副屏，或显式传 to 参数。'
-      to = a.displayId
+      if (effMode === 'foreground') {
+        to = 0
+      } else {
+        const a = await vdAlive(3000).catch(() => ({ alive: false }))
+        if (!a.alive) return '副屏未运行，无法接力。先用 phone_vd start 启动副屏，或显式传 to 参数。'
+        to = a.displayId
+      }
     }
-    if (from === to) return `源屏和目标屏相同（${from}），无需接力。`
+    if (from === to) {
+      return `源屏和目标屏相同（${from}），无需接力。`
+        + (effMode === 'foreground'
+          ? '\n当前是前台模式（操作主屏）—— 直接在主屏上用 phone_snapshot / phone_click 操作即可，不需要搬运。确实要搬到副屏请显式传 to。'
+          : '')
+    }
 
     // ① 找源屏最顶层的 task
     let taskId = 0

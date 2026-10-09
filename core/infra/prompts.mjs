@@ -392,16 +392,17 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
 - **phone_key**: 系统按键（back/home/recent/enter/delete 等）
 - **phone_wait**: 等界面稳定或等文字出现/消失，参数名是 max_wait_ms
 - **phone_screenshot**: 截取并注入当前手机画面
-- **phone_app**: 启动应用（**在虚拟副屏启动，不占物理屏**；若应用已在主屏运行会自动搬运过去，不重启）。
+- **phone_app**: 启动应用（启动到**当前操作目标屏**：前台=主屏 / 后台=虚拟副屏；
+  若应用已在别的屏运行会自动搬运过去，不重启）。
   action:'list' 列已装应用——**默认只有包名**（如 com.yixiu.magicsquare）；
   要看中文名（如「柠檬音乐」）用 action:'label' + package 读单个（约 0.5~1.3 秒，读完进缓存）；
   list 加 labels:true 只显示**已缓存**的中文名，不现场扫描（实测全量扫 71 个要 60~90 秒且手机发烫，已否决）
-- **phone_shell**: **在 Android 系统里跑任意 shell**（uid=2000 shell）。与 Bash 的分工：
-  Bash 跑在 Termux 里（读写文件），phone_shell 跑在 Android 里（操作手机）。
-  典型用途：pkill -f xxx 重启进程、am start --display N 指定屏启动、
-  pm list packages | grep xxx 找包名、run-as 包名 cat files/xxx.log 读应用私有文件、
-  settings / dumpsys 诊断。**通道卡住、副屏没起来、要找包名/读日志时先想到它**，
-  不要绕道 Bash 写 node -e "import('../phone/device.mjs')..."（慢且易错）。
+- **phone_shell**: **在 Android 系统里跑任意 shell**（uid=2000 shell）。**这是诊断通道，不是界面操作通道**：
+  点击/输入/滑动/启动 App 等界面操作一律用专用工具（phone_click / phone_type / phone_app / phone_screenshot），
+  它们遵循当前模式的目标屏（前台=主屏 / 后台=副屏）；不要在这里手写 am start / input tap 这类命令（会绕过模式、搞错屏）。
+  典型用途：pkill -f xxx 重启进程、pm list packages | grep xxx 找包名、
+  run-as 包名 cat files/xxx.log 读应用私有文件、settings / dumpsys 诊断。
+  通道卡住、副屏没起来、要找包名/读日志时用它。
   ⚠️ 它**不受 idle 模式限制** —— idle 只是「别动我屏幕」，诊断类命令照常可跑
 - **phone_vd**: 虚拟副屏进程管理（status/start/stop/restart）。
   副屏「帧缓存过期」时 snapshot 会读到旧画面，此时 restart。
@@ -697,7 +698,7 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
 | 等手机界面就绪 | phone_wait | sleep 固定秒数 |
 | 手机界面看不到元素 | phone_screenshot | screencap + 手工换算坐标 |
 | 启动手机应用 | phone_app | am start / monkey |
-| 在 Android 里跑任意命令 | phone_shell | Bash 里手搓 node -e import device.mjs |
+| 在 Android 里跑诊断命令 | phone_shell（界面操作用专用 phone 工具） | Bash 里手搓 node -e import device.mjs |
 | 副屏起停/状态 | phone_vd（或 CommandExec 跑 device vd） | app_process 手搓 |
 | 看手机操作通道状态 | phone_device（或 CommandExec 跑 device） | rish 手工探测 |
 | 跑 slash 命令 | CommandExec（**所有 slash 都能跑**） | —— |
