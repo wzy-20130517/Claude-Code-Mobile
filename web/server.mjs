@@ -2697,21 +2697,40 @@ const server = http.createServer(async (req, res) => {
           }
           // 【2026-10-08 加】压缩阈值：0 = 关闭（与 CLI 语义一致）。
           // 只做非负整数校验，范围检查交给 auto-compact 的 setter。
+          //
+          // ⚠ 这两个字段走**共享配置**（CLI config.json），不走 saveWebConfig ——
+          // README：「与 CLI 共享配置与会话数据」。saveWebConfig 只把 providers
+          // 写回 CLI、其余字段落 web-config.json（那是 Web 覆盖层，用于
+          // current/chatModels 这类会话级字段）。压缩阈值是全局设置，
+          // 必须两边一致：CLI 设的 Web 可见、Web 改的 CLI 生效。
+          const cliPatch = {}
           if (body.compactThresholdTokens !== undefined) {
             const v = Number(body.compactThresholdTokens)
             if (!Number.isFinite(v) || v < 0) return json(res, 400, { error: 'compactThresholdTokens 必须是非负数' })
-            config.compactThresholdTokens = Math.floor(v)
+            cliPatch.compactThresholdTokens = Math.floor(v)
           }
           if (body.compactThresholdMessages !== undefined) {
             const v = Number(body.compactThresholdMessages)
             if (!Number.isFinite(v) || v < 0) return json(res, 400, { error: 'compactThresholdMessages 必须是非负数' })
-            config.compactThresholdMessages = Math.floor(v)
+            cliPatch.compactThresholdMessages = Math.floor(v)
           }
-          if (!target && !Array.isArray(body.chatModels) && body.defaultModelId === undefined && body.compactThresholdTokens === undefined && body.compactThresholdMessages === undefined) {
+          if (Object.keys(cliPatch).length) {
+            try {
+              const cli = JSON.parse(readFileSync(CLI_CONFIG_PATH, 'utf8'))
+              Object.assign(cli, cliPatch)
+              atomicWrite(CLI_CONFIG_PATH, JSON.stringify(cli, null, 2), 'utf8')
+            } catch (e) {
+              return json(res, 500, { error: `写入共享配置失败: ${e.message}` })
+            }
+          }
+          const hasWebPatch = target || Array.isArray(body.chatModels) || body.defaultModelId !== undefined
+          if (!hasWebPatch && !Object.keys(cliPatch).length) {
             return json(res, 400, { error: '没有可保存的字段（current / chatModels / defaultModelId / compactThreshold*）' })
           }
-          saveWebConfig(config)
-          return json(res, 200, { ok: true, current: config.current, chatModels: config.chatModels || [], defaultModelId: config.defaultModelId || null, compactThresholdTokens: config.compactThresholdTokens ?? 0, compactThresholdMessages: config.compactThresholdMessages ?? 0 })
+          if (hasWebPatch) saveWebConfig(config)
+          // 返回最新值（读共享配置，确保回显的是落盘后的真值）
+          const fresh = loadWebConfig()
+          return json(res, 200, { ok: true, current: fresh.current, chatModels: fresh.chatModels || [], defaultModelId: fresh.defaultModelId || null, compactThresholdTokens: fresh.compactThresholdTokens ?? 0, compactThresholdMessages: fresh.compactThresholdMessages ?? 0 })
         }
       }
       // 【2026-10-08 合并】原 /api/output-styles 端点（GET 列表 / PATCH 切换）
@@ -3906,32 +3925,10 @@ async function startQqBridgeIfNeeded({ force = false } = {}) {
 
 server.listen(PORT, HOST, () => {
   console.log(`Claude Code Mobile Web 后端: http://${HOST}:${PORT}`)
-  // 【2026-10-08】自动压缩的阈值源注入 —— auto-compact.mjs 是模块级单例
-  //（CLI 和 Web 同进程共用），不注入的话 Web 读的是 CLI 的阈值、
-  // 改的时候还会写进 CLI 的 config.json。这里让它读写 Web 的配置：
-  // 阈值存 web-config.json（与 CLI config.json 分开），沿用同样的字段名。
-  import('../core/session/auto-compact.mjs').then(({ setThresholdSource }) => {
-    setThresholdSource({
-      load: () => {
-        const c = loadWebConfig()
-        return {
-          tokenLimit: c.compactThresholdTokens ?? 0,
-          messageLimit: c.compactThresholdMessages ?? 0,
-          maxContext: c.maxContextTokens ?? 1000000,
-          cachePolicy: c.compaction || {},
-        }
-      },
-      save: (v) => {
-        const c = loadWebConfig()
-        c.compactThresholdTokens = v.tokenLimit
-        c.compactThresholdMessages = v.messageLimit
-        c.maxContextTokens = v.maxContext
-        c.compaction = { ...(c.compaction || {}), ...(v.cachePolicy || {}), enabled: false }
-        saveWebConfig(c)
-      },
-    })
-    console.log('[web] 自动压缩阈值源已注入（web-config.json）')
-  }).catch(e => console.warn('[web] 自动压缩阈值源注入失败:', e?.message || e))
+  // 【2026-10-08】自动压缩阈值走**共享配置**（README：「与 CLI 共享配置与会话数据」）。
+  // auto-compact.mjs 读的 config.json 就是 CLI 那份 —— Web 不需要注入任何东西，
+  // 两边天然一致（CLI 设的 Web 可见、Web 改的 CLI 生效）。
+  // 我一度加过 setThresholdSource 注入让 Web 写 web-config.json，方向反了，已删。
   startKeepalive({ port: PORT, host: HOST }).then(({ audioStarted }) => {
     console.log(`[web] 保活: wake-lock + 常驻通知${audioStarted ? ' + 静音音频' : '（静音音频未启动）'}`)
   }).catch(() => { })
