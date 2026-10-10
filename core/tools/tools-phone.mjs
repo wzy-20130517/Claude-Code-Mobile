@@ -251,15 +251,39 @@ async function inputPrefix() {
 }
 
 export async function targetDisplay() {
-  const mode = sessionMode || 'idle'
+  // 【2026-10-10 修「副屏在跑却截主屏」】
+  // 原来 `mode = sessionMode || 'idle'` —— sessionMode 是**内存值**，
+  // 进程重启后为 null，直接落进 idle 分支 return -1（**根本不看副屏
+  // 是否可用**）。截图代码 `if (shotDisplay < 0) shotDisplay = 0` 于是
+  // 落主屏 —— 用户报「让你截副屏，你截我主屏」的根因。
+  //
+  // 修法（对齐 phone_device 的做法）：sessionMode 为空时回退读**偏好**
+  // （device.json 的 phoneMode）——用户设了 background 就按副屏走，
+  // 只有真的没设过（null）或设为 ask 且本次未定时，才按 idle 处理。
+  let mode = sessionMode
+  if (!mode) {
+    const pref = getPhoneModePreference()
+    if (pref === 'foreground' || pref === 'background') mode = pref
+  }
+  if (!mode) mode = 'idle'
   if (mode === 'foreground') return 0
   if (mode === 'idle') return -1
   const vd = await vdAlive(1200)
-  // ⚠️ 用 usable 而不是 alive —— 进程活着但屏被系统回收时，
-  // 返回那个陈旧的 displayId 会让后续 screencap / am start 全部失败，
-  // 而且报的是「Display Id '24' is not valid」这种用户看不懂的错。
-  // 落回主屏至少能操作，并在返回里带上原因提示。
-  if (vd.alive && vd.usable !== false) return vd.displayId
+  // 【2026-10-10 改判据】原来用 `usable !== false`（进程活 + 帧缓存新鲜）
+  // —— 但**帧缓存旧 ≠ 屏不可用**：screencap 走 SurfaceFlinger token 直接
+  // 截**实时**画面（实测 displayId=182 帧缓存 1097 秒未更新，screencap
+  // 照样截到当前画面，比帧缓存还新）。用 usable 拦截会把「能用的屏」
+  // 误判成不可用 → 落回主屏（用户报「让你截副屏，你截我主屏」的
+  // 第二层根因）。
+  //
+  // 现在：进程活着（alive）就返回 displayId；帧旧只是记个警告，
+  // 由调用方在结果里带一句（takeVdWarning）。真的屏被回收时，
+  // screencap 会报 "Display Id ... is not valid" → captureScreen 的
+  // invalidDisplay 分支会兜底落主屏（那条路已验证可靠）。
+  if (vd.alive && vd.displayId > 0) {
+    if (vd.stale) lastVdWarning = vd.warn
+    return vd.displayId
+  }
   if (vd.stale) lastVdWarning = vd.warn
   return 0
 }
