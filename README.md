@@ -14,9 +14,9 @@ Claude Code Mobile（简称 CCM）是一个**运行在 Android 手机上的命�
 它长这样：
 
 ```
-❯ 帮我看看 core/api.mjs 里的重试逻辑
+❯ 帮我看看 core/api/api.mjs 里的重试逻辑
 
-● Read (core/api.mjs)
+● Read (core/api/api.mjs)
   ⎿ 1: // Claude Code Mobile - API 客户端
     2: import { ...
 
@@ -41,20 +41,22 @@ Claude Code Mobile（简称 CCM）是一个**运行在 Android 手机上的命�
 
 ### 🤖 Agent 能力
 
-- **完整工具集**：Read / Write / Edit / MultiEdit / ApplyPatch / Glob / Grep / Bash / WebSearch /
-  WebFetch / TodoWrite / Task 等 **60+ 工具**
+- **完整工具集**：**100 个工具** —— Read / Write / Edit / MultiEdit / ApplyPatch / Glob / Grep /
+  Bash / WebSearch / WebFetch / TodoWrite / Task / LSP / Hashline 系列等
 - **子 Agent 系统**：可派发独立 Agent 并行处理任务，支持递归派生（并发上限 24）
 - **多 Agent 协作**：Team 工具组（建组/派活/通信/收工），Task 持久化待办跨重启存活
 - **AgentWorkflow**：Explore → Plan → Implement → Review 四阶段工作流
 - **长期记忆**：AgentMemory 按类型分池、跨会话保留经验
+- **Goal 完成契约**：`/goal` 设定目标 + 完成判据 + 预算，自动推进直到达成
 
 ### 📱 手机特化（这是它和桌面版最大的不同）
 
 - **虚拟副屏操作**：在后台静默操作其他 App（不占用你的屏幕），基于 Shizuku + VirtualDisplay
-- **主屏操作模式**：也可以在前台操作，你能看见 AI 点哪
+- **主屏操作模式**：也可以在前台操作，你能看见 AI 点哪（`/device mode 主屏`）
 - **元素树快照**：文本格式的 UI 树（比截图快一个数量级），模型直接读文本操作
 - **语音播报**：任务开始/关键节点/完成时用 Edge TTS 播报进展
 - **手机原生能力**：剪贴板、通知、震动、TTS、GPS、电池、截图
+- **QQ 桥**：通过 QQ 私聊给 Agent 下指令、接收回复（含图片/文件）
 
 ### 💬 交互体验
 
@@ -62,14 +64,15 @@ Claude Code Mobile（简称 CCM）是一个**运行在 Android 手机上的命�
 - **流式 markdown 渲染**：边收边渲染，支持代码高亮、表格、列表
 - **思维链显示**：`∴ Thinking…` 三态状态机（思考中/已思考/隐藏）
 - **工具输出窗口**：长命令实时输出滚动显示，结果到达后写回工具行位置
-- **会话管理**：多会话切换、历史回放、分支、检查点回退
+- **正文/工具交错渲染**：`正文1 → 工具1 → 正文2 → 工具2` 按真实输出顺序排布
+- **会话管理**：多会话切换、历史回放、分支、检查点回退、压缩回收站
 - **Prompt Cache 优化**：支持 `prompt_cache_key` 与 24h 保留，显著降低成本
 
 ### 🌐 Web 端
 
 同一套内核，也有浏览器界面（Vue 3 + Vite + Tailwind）：
 
-- **约 2.9 万行前端代码**（77 个文件 / 45 个组件）+ 3800 行后端（`web/server.mjs`）
+- **约 2.8 万行前端代码**（74 个文件 / 45 个组件）+ 3900 行后端（`web/server.mjs`）
 - **完整对话界面**：流式渲染、思维链折叠、工具调用卡片、代码高亮、Markdown 表格
 - **Artifacts 面板**：类 Claude Artifacts 的侧边预览，支持 React / HTML / SVG 实时渲染
 - **文档系统**：文档卡片、创建流程、预览（含 docx 预览）
@@ -85,13 +88,13 @@ Claude Code Mobile（简称 CCM）是一个**运行在 Android 手机上的命�
 
 ### 🔌 扩展性
 
-- **DSH 插件（v0.8.220+）**：兼容 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+- **DSH 插件**：兼容 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
   插件生态——官方 Cordis 框架 + 28 个官方服务，实测 **31 个官方插件 + 10 个第三方插件**可加载。
   用 `/plugin` 管理（装/卸/启停），插件还能给 CCM 提供模型渠道
   （如 `dsh-freeroute` 的免费额度聚合、`dsh-account-pool` 的多账号池）。详见 `dsh-host/README.md`
 - **MCP 支持**：接入任意 Model Context Protocol 服务器（Playwright、邮件、通知等）
 - **Skills 系统**：可插拔的技能包——放 `skills/<名字>/SKILL.md` 即生效，
-  也可放 `~/.claude/skills/`（全局）
+  也可放 `~/.claude/skills/`（全局）。每个 skill 同时是可敲的 slash 命令
 - **自定义命令**：`.claude/commands/*.md` 手写 slash 命令
 - **自定义 Agent**：`.claude/agents/*.md` 定义专属角色（CTO/QA/产品经理…）
 - **Hooks 系统**：SessionStart / PreToolUse / PostToolUse / Stop 等事件钩子
@@ -103,24 +106,18 @@ Claude Code Mobile（简称 CCM）是一个**运行在 Android 手机上的命�
 
 ### 环境要求
 
-- **Android 手机**（已在 REDMI Note 15 Pro / Android 15 上验证）
-- **Termux**（从 [F-Droid](https://f-droid.org/packages/com.termux/) 安装，不要用 Play 商店版）
+- **Termux**（F-Droid 版，不要用 Play 商店版）
 - **Node.js 18+**（`pkg install nodejs`）
-- 一个 **API 端点**，支持以下三种协议之一（在向导里选）：
-  - **OpenAI 兼容**（`/chat/completions`）—— 最通用，官方 OpenAI / 绝大多数中转站 / 本地反代
-  - **Anthropic**（`/v1/messages`）—— Claude 原生，thinking / cache 语义最准
-  - **Responses**（`/responses`）—— OpenAI 新协议，支持推理项回传与服务端会话
 
 ### 安装
 
 ```bash
 # 1. 装依赖（nodejs 必需，termux-api 可选但推荐，见下）
-pkg install nodejs git termux-api
+pkg install nodejs termux-api
 
 # 2. 克隆项目
-cd ~
-git clone https://github.com/wzy-20130517/Claude-Code-Mobile.git claude-code-mobile
-cd claude-code-mobile
+git clone https://github.com/wzy-20130517/Claude-Code-Mobile.git
+cd Claude-Code-Mobile
 
 # 3. 装 npm 依赖
 npm install
@@ -129,53 +126,29 @@ npm install
 bash start.sh
 ```
 
-首次启动会引导你填：
-- **API 地址**（如 `https://api.openai.com/v1`，或你的中转站地址）
-- **API Key**
-- **模型名**（如 `gpt-4o`、`claude-sonnet-4`，取决于你的端点支持什么）
-- **终端字体**（字体已内置在项目里，选完直接装、无需联网）
-
-配置存在 `~/.claude-code-mobile/config.json`，**源码目录不含任何用户数据**。
+首次启动会让你配一个 API Provider（地址 + Key + 模型）。
+任何 **OpenAI / Anthropic / Responses 兼容**的端点都行。
 
 ### 启动方式
 
-**首次启动必须用 `bash start.sh`**（它会做两件事：装依赖、把 `claude` 命令注册到 `$PREFIX/bin`）。
-之后就可以用全局命令了：
-
 ```bash
-claude          # 启动 CLI（等同于 bash start.sh）
-claude web      # 启动 Web 端（后台守护 + 自动打开浏览器）
+bash start.sh          # 启动 CLI
+bash start.sh web      # 启动 Web 端（后台守护 + 健康检查 + 打开浏览器）
 ```
 
-`claude web` 会在 `http://127.0.0.1:3456` 起一个 Web 服务，手机浏览器或局域网内的电脑都能访问。
-
-> 全局命令的安装逻辑在 `start.sh` 里：它把启动器写进 `$PREFIX/bin/claude`，
-> 且**不会覆盖**已有的同名命令（如果你装过官方 Claude Code，两者不冲突）。
+`start.sh` 会安装全局 `claude` 命令（如果没冲突），之后终端里敲 `claude` 即可；
+Web 端也可以在全局命令下用 `claude web` 启动。
 
 ### 可选依赖：Termux API
-
-部分功能依赖 **termux-api**（Termux 的 Android 能力桥）：
 
 ```bash
 pkg install termux-api
 # 还要装 Termux:API 应用（F-Droid 搜索 "Termux:API"）
 ```
 
-装好后可用：
-
-| 功能 | 对应工具 |
-|---|---|
-| 系统通知 | `Notify` |
-| 剪贴板读写 | `ClipboardGet` / `ClipboardSet` |
-| 语音播报 | `say` / `TTS` |
-| 震动、电量、GPS | `Vibrate` / `Battery` / `Location` |
-| 分享到其他 App | `Share` |
-
-**不装也能用**，只是这些工具会报「未安装 termux-api」。
+装了就多出这些能力：剪贴板读写、系统通知、震动、TTS、GPS、电池状态、分享、打开链接。
 
 ### 可选：手机操作能力（虚拟副屏）
-
-需要额外安装 **Shizuku**（[官网](https://shizuku.rikka.app/)）并授权给 Termux：
 
 ```bash
 # 装 rish（Shizuku 的命令行工具）
@@ -183,11 +156,14 @@ pkg install termux-api
 # 然后导出 rish
 ```
 
-装好后 AI 就能在后台操作其他 App 了。
+配好后 AI 就能在虚拟副屏上静默操作其他 App（点按/输入/滑动/截图/读元素树）。
 
 ---
 
 ## 常用命令
+
+**共 96 个内置命令**（下表只列常用的）。
+按 `/help` 看全部，`/help <主题>` 看详细说明，`/palette` 开模糊搜索面板。
 
 ### 会话管理
 
@@ -200,25 +176,27 @@ pkg install termux-api
 | `/branch <名称>` | 从当前对话创建分支 |
 | `/rewind` | 查看检查点 / 回退消息 |
 | `/compact` | 压缩上下文（自动选策略） |
-| `/clear` | 清空当前对话记录 |
+| `/clear` | 清空当前对话记录（清空前自动存档） |
 
 ### 配置
 
 | 命令 | 作用 |
 |---|---|
-| `/config` | Provider 管理（切换/添加/删除） |
+| `/config` | Provider 管理（切换/添加/删除/详情） |
 | `/model <名称>` | 改模型 |
 | `/url <地址>` | 改 API 地址 |
-| `/key <sk-...>` | 改 API Key（支持多 key 轮换池） |
+| `/key <sk-...>` | 改 API Key（支持多 key 轮换池：`/key pool k1 k2`） |
+| `/protocol <协议>` | 请求协议（openai / anthropic / responses） |
 | `/effort <级别>` | 深度思考强度（none/minimal/low/medium/high/xhigh/max） |
-| `/style <名字>` | 输出风格（default/Explanatory/Learning 或自定义） |
-| `/markdown <样式>` | 终端 Markdown 渲染样式（classic/official） |
+| `/style <自由文本>` | 设置回复偏好（与 `/me set personal_preferences` 同字段） |
+| `/markdown <样式>` | 终端 Markdown 渲染样式（classic / official） |
 
 ### 工具与扩展
 
 | 命令 | 作用 |
 |---|---|
 | `/mcp` | 管理 MCP 服务器 |
+| `/plugin` | 管理 DSH 插件（`/plugins` 是别名） |
 | `/skills` | 查看可用技能 |
 | `/agents` | 管理自定义 Agent |
 | `/hooks` | 查看 Hooks 配置 |
@@ -229,20 +207,19 @@ pkg install termux-api
 
 | 命令 | 作用 |
 |---|---|
-| `/device` | 手机操作通道状态（Shizuku/adb） |
-| `/device mode` | 主屏 / 副屏 / 每次询问 |
-| `/voice` | 正文语音朗读开关与音色 |
-| `/say <文本>` | 让 AI 主动语音播报 |
-
-**共 91 个内置命令**（上表只列了常用的）。
-按 `/help` 看全部，`/help <主题>` 看详细说明，`/palette` 开模糊搜索面板。
+| `/device` | 手机操作通道状态（Shizuku/adb）+ 副屏管理 |
+| `/device mode 主屏\|副屏\|选择` | 设置操作模式偏好 |
+| `/voice on\|off` | 正文语音朗读开关与音色 |
+| `/qq` | QQ 桥配置（`/qq setup` 向导） |
+| `/mail` | 多邮箱账号管理 |
+| `/tvly` / `/pexels` | 搜索/图库 API key |
 
 ### 快捷键
 
 | 按键 | 作用 |
 |---|---|
 | `Ctrl+I` | 补全命令名 / 文件路径（首次按=填入 `/resume`） |
-| `Ctrl+J` | 插入换行（也支持 `Shift+Enter`） |
+| `Ctrl+J` | 插入换行（也支持 `Shift+Enter` / `Alt+Enter`） |
 | `Ctrl+P/N` | 上一条 / 下一条历史 |
 | `Ctrl+L` | 清屏 |
 | `Ctrl+C` | 清行 / 退出 / 打断当前任务 |
@@ -255,25 +232,23 @@ pkg install termux-api
 
 ```
 claude-code-mobile/
-├── index.mjs              # CLI 主入口（约 6800 行）
+├── index.mjs              # CLI 主入口（约 7000 行）
 ├── start.sh               # 启动脚本（含重启循环、全局命令安装）
 ├── start-web.sh           # Web 端启动
 │
-├── core/                  # 核心模块（137 个文件，约 4.1 万行）
-│   ├── agent.mjs          # Agent 主循环（工具调用、多轮、并发执行）
-│   ├── api.mjs            # API 客户端（OpenAI/Anthropic/Responses 三协议）
-│   ├── prompts.mjs        # 系统提示词（工具说明、行为准则）
-│   ├── tools-*.mjs        # 各类工具实现
-│   ├── cmd-*.mjs          # Slash 命令实现
-│   ├── fullscreen*.mjs    # 全屏终端 UI（虚拟屏幕、diff 渲染）
-│   ├── readline.mjs       # 输入处理（手机快捷键、多行、补全）
-│   ├── markdown.mjs       # Markdown 渲染器
-│   ├── plan.mjs           # 子 Agent 系统
-│   ├── tools-phone.mjs    # 手机操作工具集
-│   └── paths.mjs          # 统一路径解析（数据目录）
+├── core/                  # 核心模块（144 个文件，约 4.5 万行）
+│   ├── agent/             # Agent 主循环、子 Agent、任务/团队/Goal、自动记忆
+│   ├── api/               # API 客户端（OpenAI/Anthropic/Responses 三协议）
+│   ├── commands/          # Slash 命令实现（33 个模块 + 注册表 + 向导）
+│   ├── infra/             # 基础设施（路径、配置、提示词、hooks、预检）
+│   ├── integrations/      # MCP 客户端、QQ 桥、GitHub 工具
+│   ├── phone/             # 手机操作（Shizuku 通道、设备管理、图片处理）
+│   ├── session/           # 会话存储、消息模型、自动保存
+│   ├── tools/             # 工具实现（文件/搜索/网络/手机/视觉/Goal…）
+│   └── ui/                # 终端 UI（全屏渲染、虚拟屏幕、Markdown、输入处理）
 │
-├── web/                   # Web 端（Vue 3 + Vite + Tailwind，约 2.9 万行）
-│   ├── server.mjs         # HTTP/SSE 服务（3800 行）
+├── web/                   # Web 端（Vue 3 + Vite + Tailwind，约 2.8 万行）
+│   ├── server.mjs         # HTTP/SSE 服务（约 3900 行，与 CLI 共享命令系统）
 │   ├── src/
 │   │   ├── components/    # 45 个组件（对话/Artifacts/文档/设置…）
 │   │   └── ...            # 页面、状态、API 客户端
@@ -285,7 +260,8 @@ claude-code-mobile/
 │   ├── server.mjs         # 门面服务（:8790，控制 API + provider 转发）
 │   └── start.sh           # 启停脚本（含就绪检测）
 │
-├── tools/                 # 辅助脚本（MCP server、check-sync 等）
+├── skills/                # 内置技能包（key-pool / phone-use / qq-bridge / …）
+├── tools/                 # 辅助脚本（MCP server、副屏 dex 构建、同步检查）
 ├── assets/                # 字体等静态资源
 └── docs/                  # 开发文档
 ```
@@ -304,8 +280,10 @@ claude-code-mobile/
 ├── sessions/              # 会话存档
 ├── trash/                 # 文件回收站
 ├── undo/                  # 撤销快照
+├── compact-trash/         # 压缩前快照（可恢复）
 ├── agents/                # 自定义 Agent 角色
-└── agent-memory/          # 子 Agent 长期记忆
+├── agent-memory/          # 子 Agent 长期记忆
+└── dsh-host/              # DSH 插件数据
 ```
 
 这样设计的好处：**源码目录可以随便复制/重装**，配置和记忆跟着用户走。
@@ -331,7 +309,7 @@ claude-code-mobile/
 
 ### 全屏终端 UI
 
-自实现的虚拟屏幕（`core/vscreen.mjs`）+ diff 渲染：
+自实现的虚拟屏幕 + diff 渲染：
 - 只输出变化的单元格（而不是整屏重绘），手机上省电省流量
 - 折行缓存按影响范围**局部失效**（实测把单帧 334ms 降到 0.2ms）
 - 固定 header（欢迎页）+ 滚动 body + 固定 footer（输入框/状态栏）
@@ -347,6 +325,13 @@ CCM (Termux)
 
 元素树以**平铺文本**返回（`#e12 Button "发送" 940,2100,1180,2200 c`），
 模型直接读文本、用 id 点击，不用算坐标。
+
+### 多 Agent 编排
+
+- 子 Agent 有独立上下文窗口，可递归派生（全局并发上限 24）
+- Team 工具组支持建组、派活、消息传递（队友消息自动送达）
+- Task 持久化待办跨重启存活，支持依赖关系（blockedBy）
+- AgentMemory 按 Agent 类型分池，跨会话积累经验
 
 ---
 
