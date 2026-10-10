@@ -3,7 +3,11 @@
 
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- 【2026-10-10 加】interactive-widget=resizes-content：手机键盘弹出时
+       把视口高度**缩小**（而不是只平移内容）—— 否则输入框会被键盘盖住
+       （100vh 不随键盘变化）。Android Chrome 108+ / iOS Safari 16.4+ 支持。
+       maximum-scale=1 防输入时页面自动放大（iOS 的老毛病）。 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, interactive-widget=resizes-content" />
   <title>Claude</title>
   <link rel="icon" type="image/png" sizes="200x200" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/favicon.png" />

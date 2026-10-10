@@ -1689,6 +1689,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
   const userScrolledUpRef = useRef(false);
+  // 【2026-10-10 加】「回到底部」按钮显示状态 —— ref 不触发重渲染，
+  // 需要一个 state 驱动按钮的出现/消失（对齐 APK 的 followBottom 机制）。
+  const [showScrollButton, setShowScrollButton] = useState(false);
   const [scrollbarWidth, setScrollbarWidth] = useState(0);
   const [expandedMessages, setExpandedMessages] = useState<Set<number>>(new Set());
   const [copiedMessageIdx, setCopiedMessageIdx] = useState<number | null>(null);
@@ -1935,6 +1938,8 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
         isAtBottomRef.current = false;
         // 取消正在进行的 smooth scroll 动画
         el.scrollTo({ top: el.scrollTop });
+        // 【2026-10-10】滚轮上翻 → 显示「回到底部」按钮
+        setShowScrollButton(true);
       }
     };
     el.addEventListener('wheel', handleWheel, { passive: true });
@@ -2530,6 +2535,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       if (!userScrolledUpRef.current) {
         isAtBottomRef.current = isBottom;
       }
+      // 【2026-10-10】「回到底部」按钮：不在底部就显示（对齐 APK
+      // 的 `AnimatedVisibility(visible = !followBottom)`）。
+      setShowScrollButton(!isBottom);
     }
   };
 
@@ -2539,6 +2547,34 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       el.scrollTo({ top: el.scrollHeight, behavior });
     }
   };
+
+  /**
+   * 【2026-10-10 加】「回到底部」按钮点击 —— 对齐 APK 的成熟做法。
+   *
+   * APK 踩过的坑（注释里记录过）：点按钮后判定逻辑会把 followBottom
+   * 打回 false（smooth 动画途中 (max-v)>50，被当成「用户上翻」），
+   * 按钮反复闪、点了像没反应。修法是「追底循环」—— 每帧滚，
+   * 追到后自然停（scrollTo 幂等），期间不做「用户上翻」判定。
+   *
+   * Web 对应实现：先把两个 ref 打回「跟随」状态（阻止自动滚动被中断），
+   * 再用 rAF 追底几帧（流式期间内容还在长高，一次 scrollTo 追不上）。
+   */
+  const handleScrollToBottomClick = useCallback(() => {
+    userScrolledUpRef.current = false;
+    isAtBottomRef.current = true;
+    setShowScrollButton(false);
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    // 追底循环：连续几帧滚到底（对齐 APK 的 repeat(40) 思路，
+    // 但 Web 内容长高通常 2~3 帧内稳定，6 帧足够）
+    let frames = 0;
+    const chase = () => {
+      el.scrollTop = el.scrollHeight;
+      frames++;
+      if (frames < 6) requestAnimationFrame(chase);
+    };
+    requestAnimationFrame(chase);
+  }, []);
 
   const scheduleScrollToBottomAfterRender = useCallback((attempts = 6) => {
     const run = (remaining: number) => {
@@ -5041,6 +5077,26 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
             <span>Claude 是 AI，可能会出错。请核对回复内容。</span>
           )}
         </div>
+
+        {/* 【2026-10-10 加】「回到底部」按钮 —— 对齐 APK 的同款功能。
+            用户上翻阅读历史时出现，点击回到最新消息并恢复自动跟随。
+            位置：输入框上方居中（与 APK 的 BottomCenter 对齐）。
+            样式：accent 实底 + 反色文字（对比度拉满，对齐 APK 2026-10-07 的改进）。 */}
+        {showScrollButton && (
+          <div
+            className="absolute left-0 right-0 z-30 pointer-events-none flex justify-center"
+            style={{ bottom: `${inputBarBottom + 96}px` }}
+          >
+            <button
+              onClick={handleScrollToBottomClick}
+              className="pointer-events-auto flex items-center justify-center w-9 h-9 rounded-full bg-[#D97757] text-white shadow-[0_2px_10px_rgba(0,0,0,0.25)] hover:bg-[#c96a4d] active:scale-95 transition-all"
+              title="回到底部"
+              aria-label="回到底部"
+            >
+              <ChevronDown size={18} />
+            </button>
+          </div>
+        )}
 
         {/* 输入框 - 浮动在内容上方，底部距离可调 */}
         <div className="absolute left-0 right-0 z-20 pointer-events-none" style={{ bottom: `${inputBarBottom + 28}px`, paddingLeft: '16px', paddingRight: `${16 + scrollbarWidth}px` }}>

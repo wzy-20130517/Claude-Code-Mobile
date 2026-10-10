@@ -671,7 +671,10 @@ const Layout = () => {
 
   return (
     <>
-      <div className="relative flex w-full h-screen overflow-hidden bg-claude-bg font-sans antialiased">
+      {/* 【2026-10-10】h-screen(100vh) → 100dvh：手机键盘弹出时 dvh 会
+          跟着收缩（配合 index.html 的 interactive-widget=resizes-content），
+          输入框不会被键盘盖住。桌面浏览器 dvh 与 vh 等价，无副作用。 */}
+      <div className="relative flex w-full overflow-hidden bg-claude-bg font-sans antialiased" style={{ height: '100dvh' }}>
         {/* Custom Solid Title Bar (Unified Full Width) */}
         <div
           data-chrome="titlebar"
