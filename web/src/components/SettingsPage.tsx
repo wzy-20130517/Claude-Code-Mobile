@@ -138,6 +138,33 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     }
   }
 
+  // 【2026-10-10 加】手机操作模式（phone use）—— 对齐 APK 设置页的
+  // 「手机操作」区块。存 device.json（与 CLI /device mode 同一文件），
+  // 经 /api/config 的 phoneMode 字段读写。
+  const [phoneMode, setPhoneMode] = useState<string>('');
+  const [phoneMsg, setPhoneMsg] = useState('');
+  useEffect(() => {
+    fetch('/api/config').then(r => r.json())
+      .then(d => setPhoneMode(d.phoneMode || ''))
+      .catch(() => {});
+  }, []);
+  async function savePhoneMode(v: string) {
+    try {
+      const r = await fetch('/api/config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneMode: v }),
+      });
+      const d = await r.json();
+      if (!r.ok) { setPhoneMsg(d.error || '保存失败'); return; }
+      setPhoneMode(d.phoneMode || v);
+      setPhoneMsg('已保存');
+      setTimeout(() => setPhoneMsg(''), 2000);
+    } catch (e: any) {
+      setPhoneMsg(e?.message || '网络错误');
+    }
+  }
+
   useEffect(() => {
     // 两种模式统一走 getUserProfile：自部署读 /api/profile，失败自动回落 localStorage
     getUserProfile().then((data: any) => {
@@ -803,6 +830,46 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
             </p>
           </div>
         </section>
+
+        {/* Phone Use Section —— 【2026-10-10 加】对齐 APK 设置页的「手机操作」区块 */}
+        <section>
+          <h3 className="text-[16px] font-semibold text-claude-text mb-5">手机操作</h3>
+          <div className="space-y-5">
+            <p className="text-[12px] text-claude-textSecondary/70">
+              Agent 操作手机时用哪块屏（与 CLI 的 /device mode 同一配置，存 device.json）。
+              主屏 = 你能看到它在点什么；副屏 = 虚拟屏静默运行，不占你屏幕；选择 = 每次用时弹框问你。
+            </p>
+            <div className="space-y-2">
+              {[
+                { v: 'foreground', label: '主屏（前台，你能看到）' },
+                { v: 'background', label: '副屏（后台，静默）' },
+                { v: 'ask', label: '每次询问' },
+              ].map(opt => (
+                <button
+                  key={opt.v}
+                  onClick={() => savePhoneMode(opt.v)}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-md border text-[14px] text-left transition-all ${
+                    phoneMode === opt.v
+                      ? 'border-[#D97757] bg-[#D97757]/5 text-claude-text'
+                      : 'border-claude-border hover:border-[#CCC] text-claude-textSecondary'
+                  }`}
+                >
+                  <span>{opt.label}</span>
+                  {phoneMode === opt.v && <Check size={16} className="text-[#D97757]" />}
+                </button>
+              ))}
+            </div>
+            <p className="text-[12px] text-claude-textSecondary">
+              当前：{phoneMode === 'foreground' ? '主屏（前台）'
+                : phoneMode === 'background' ? '副屏（后台）'
+                : phoneMode === 'ask' ? '每次询问'
+                : '未设置（默认每次询问）'}
+              {phoneMsg && <span className="ml-2 text-claude-textSecondary/60">{phoneMsg}</span>}
+            </p>
+          </div>
+        </section>
+
+        <hr className="border-claude-border" />
 
         {/* Send Key Section —— 标题对齐 APK 的「对话」 */}
         <section>

@@ -17,6 +17,10 @@ import { Agent } from '../core/agent/agent.mjs'
 import { ApiClient } from '../core/api/api.mjs'
 import { createEngineToolkit } from '../core/infra/engine-setup.mjs'
 import { setPhoneModePrompter, setPhoneFinishAction } from '../core/tools/tools-phone.mjs'
+// 【2026-10-10】device.json 读写（设置页「手机操作」区块用）——
+// 顶层静态 import：/api/config 处理器不在 getWebCtxDeps 的作用域里，
+// 用不了那里的动态 deviceMod。
+import { loadDeviceConfig, saveDeviceConfig } from '../core/phone/device.mjs'
 import { startKeepalive, stopKeepalive, keepaliveStatus } from '../core/infra/web-keepalive.mjs'
 import { SessionStore, ClaudeMdLoader } from '../core/session/persistence.mjs'
 import { MCPClient } from '../core/integrations/mcp-client.mjs'
@@ -2681,7 +2685,10 @@ const server = http.createServer(async (req, res) => {
           const config = loadWebConfig()
           // 【2026-10-08 加】压缩阈值（compactThresholdTokens/Messages）——
           // 设置页「自动压缩」区块用，与 CLI 同名同语义（0 = 关闭）。
-          return json(res, 200, { current: config.current, defaultProviderId: config.current, source: 'web-config.json', stream: config.stream !== false, permissionMode: config.permissionMode || 'bypassPermissions', thinking: config.thinking || {}, providers: publicProviders(config), chatModels: Array.isArray(config.chatModels) ? config.chatModels : [], defaultModelId: config.defaultModelId || null, compactThresholdTokens: config.compactThresholdTokens ?? 0, compactThresholdMessages: config.compactThresholdMessages ?? 0 })
+          // 【2026-10-10 加】phoneMode —— 设置页「手机操作」区块用，
+          // 存 device.json（与 CLI 的 /device mode 同一文件同一字段）。
+          const devCfg = (() => { try { return loadDeviceConfig() || {} } catch { return {} } })()
+          return json(res, 200, { current: config.current, defaultProviderId: config.current, source: 'web-config.json', stream: config.stream !== false, permissionMode: config.permissionMode || 'bypassPermissions', thinking: config.thinking || {}, providers: publicProviders(config), chatModels: Array.isArray(config.chatModels) ? config.chatModels : [], defaultModelId: config.defaultModelId || null, compactThresholdTokens: config.compactThresholdTokens ?? 0, compactThresholdMessages: config.compactThresholdMessages ?? 0, phoneMode: devCfg.phoneMode || null })
         }
         // 【默认 Provider 要落盘】原来前端只能把它存 localStorage ——
         // 那是浏览器本地的，换设备/清缓存就没了，用户感受就是「选了不保存，
@@ -2731,14 +2738,29 @@ const server = http.createServer(async (req, res) => {
               return json(res, 500, { error: `写入共享配置失败: ${e.message}` })
             }
           }
+          // 【2026-10-10 加】phoneMode —— 存 device.json（与 CLI /device mode
+          // 同一文件），白名单校验三个合法值（对齐 CLI cmd-device.mjs 的 MAP）。
+          let phonePatchOk = false
+          if (body.phoneMode !== undefined) {
+            const v = String(body.phoneMode || '')
+            const VALID = new Set(['foreground', 'background', 'ask'])
+            if (!VALID.has(v)) return json(res, 400, { error: `phoneMode 只能是 foreground / background / ask，收到「${v}」` })
+            try {
+              saveDeviceConfig({ phoneMode: v })
+              phonePatchOk = true
+            } catch (e) {
+              return json(res, 500, { error: `写入 device.json 失败: ${e.message}` })
+            }
+          }
           const hasWebPatch = target || Array.isArray(body.chatModels) || body.defaultModelId !== undefined
-          if (!hasWebPatch && !Object.keys(cliPatch).length) {
-            return json(res, 400, { error: '没有可保存的字段（current / chatModels / defaultModelId / compactThreshold*）' })
+          if (!hasWebPatch && !Object.keys(cliPatch).length && !phonePatchOk) {
+            return json(res, 400, { error: '没有可保存的字段（current / chatModels / defaultModelId / compactThreshold* / phoneMode）' })
           }
           if (hasWebPatch) saveWebConfig(config)
           // 返回最新值（读共享配置，确保回显的是落盘后的真值）
           const fresh = loadWebConfig()
-          return json(res, 200, { ok: true, current: fresh.current, chatModels: fresh.chatModels || [], defaultModelId: fresh.defaultModelId || null, compactThresholdTokens: fresh.compactThresholdTokens ?? 0, compactThresholdMessages: fresh.compactThresholdMessages ?? 0 })
+          const freshDev = (() => { try { return loadDeviceConfig() || {} } catch { return {} } })()
+          return json(res, 200, { ok: true, current: fresh.current, chatModels: fresh.chatModels || [], defaultModelId: fresh.defaultModelId || null, compactThresholdTokens: fresh.compactThresholdTokens ?? 0, compactThresholdMessages: fresh.compactThresholdMessages ?? 0, phoneMode: freshDev.phoneMode || null })
         }
       }
       // 【2026-10-08 合并】原 /api/output-styles 端点（GET 列表 / PATCH 切换）
