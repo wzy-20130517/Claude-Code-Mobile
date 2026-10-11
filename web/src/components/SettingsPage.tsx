@@ -62,6 +62,10 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [deleteError, setDeleteError] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
+  // 【2026-10-11】语音朗读状态（与 CLI/APK 同一份配置）
+  const [voiceEnabled, setVoiceEnabled] = useState(() => localStorage.getItem('voice_enabled') === '1');
+  const [voiceName, setVoiceName] = useState(() => localStorage.getItem('voice_name') || 'yunxia');
+  const [voiceRate, setVoiceRate] = useState(() => localStorage.getItem('voice_rate') || '+0%');
   const [sendKey, setSendKey] = useState(localStorage.getItem('sendKey') || 'button_only'); // 默认仅按钮发送
   const [newlineKey, setNewlineKey] = useState(localStorage.getItem('newlineKey') || 'enter');
 
@@ -943,6 +947,90 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                   </svg>
                 </div>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <hr className="border-claude-border" />
+
+        {/* Voice Section —— 【2026-10-11 加】对齐 APK 设置页的「语音朗读」 */}
+        <section>
+          <h3 className="text-[16px] font-semibold text-claude-text mb-5">语音朗读</h3>
+          <div className="grid grid-cols-2 gap-6">
+            <div>
+              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">自动朗读回复</label>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    const next = !voiceEnabled;
+                    setVoiceEnabled(next);
+                    localStorage.setItem('voice_enabled', next ? '1' : '0');
+                  }}
+                  className={`relative w-[44px] h-[24px] rounded-full transition-colors ${
+                    voiceEnabled ? 'bg-[#2563EB]' : 'bg-claude-border'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-[2px] w-[20px] h-[20px] rounded-full bg-white transition-transform ${
+                      voiceEnabled ? 'translate-x-[22px]' : 'translate-x-[2px]'
+                    }`}
+                  />
+                </button>
+                <span className="text-[13px] text-claude-textSecondary">
+                  {voiceEnabled ? '开启' : '关闭'}
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">音色</label>
+              <div className="relative">
+                <select
+                  value={voiceName}
+                  onChange={(e) => {
+                    setVoiceName(e.target.value);
+                    localStorage.setItem('voice_name', e.target.value);
+                  }}
+                  className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 appearance-none transition-all"
+                >
+                  <option value="yunxia">云夏（少年音）</option>
+                  <option value="xiaoxiao">晓晓（女声，温和）</option>
+                  <option value="yunxi">云希（男声，沉稳）</option>
+                  <option value="yunjian">云健（男声，浑厚）</option>
+                  <option value="xiaoyi">晓伊（女声，活泼）</option>
+                  <option value="liaoning">东北话</option>
+                  <option value="shaanxi">陕西话</option>
+                </select>
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-claude-textSecondary">
+                  <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            <div className="col-span-2">
+              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">
+                语速（{voiceRate}）
+              </label>
+              <input
+                type="range"
+                min="-50"
+                max="100"
+                step="10"
+                value={parseInt(voiceRate) || 0}
+                onChange={(e) => {
+                  const v = `${Number(e.target.value) >= 0 ? '+' : ''}${e.target.value}%`;
+                  setVoiceRate(v);
+                  localStorage.setItem('voice_rate', v);
+                }}
+                className="w-full accent-[#D97757]"
+              />
+              <p className="mt-2 text-[12px] text-claude-textSecondary">
+                每条回复完成后用云端语音（与 CLI/APK 同一音色库）念出来。
+                也可用命令：<code className="font-mono text-claude-text">/voice on|off</code> ·
+                <code className="font-mono text-claude-text">/voice rate +20%</code>
+              </p>
             </div>
           </div>
         </section>

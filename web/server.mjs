@@ -2175,9 +2175,18 @@ async function executeSlashCommand(runtime, raw) {
     return { kind: 'output', text: `温度已设为 **${t}**。下一轮生效。` }
   }
   if (name === 'voice') {
-    // Web 的语音走浏览器原生 Web Speech API（见前端语音按钮），
-    // 不走 CLI 那套 termux-speech-to-text，所以这里只报告状态。
-    return { kind: 'output', text: '**语音输入**\n\nWeb 端用浏览器自带的语音识别（输入框旁的话筒按钮）。\n\n- 需要：浏览器有话筒权限\n- 不支持时：那个按钮会提示「当前环境无法启动语音听写」\n- CLI 侧另有 `/voice` 配置项（Termux 语音命令），与 Web 互不影响' }
+    // 【2026-10-11 重写】原来是「语音输入」的说明（浏览器 Web Speech API）——
+    // 但 CLI/APK 的 `/voice` 是**正文朗读**（TTS），三端该统一。
+    //
+    // Web 的实现：服务端复用 edge-tts 合成（/api/tts），前端 <audio> 播放。
+    // 配置存在 localStorage（voice_enabled / voice_name / voice_rate）——
+    // 服务端读不到 localStorage，所以这里只输出**用法说明**，实际改由前端设置页。
+    const sub = (args[0] || '').toLowerCase()
+    const VOICES = 'yunxia（少年）/ xiaoxiao（女声）/ yunxi（男声）/ yunjian（浑厚）/ xiaoyi（活泼）/ liaoning（东北）/ shaanxi（陕西）'
+    if (sub === 'on' || sub === 'off') {
+      return { kind: 'output', text: `语音朗读的开关存在**浏览器本地**（localStorage），服务端改不了。\n\n请在**设置 → 语音朗读**里开关，或直接在浏览器控制台执行：\n\`localStorage.setItem('voice_enabled', '${sub === 'on' ? '1' : '0'})\`\n\n改完刷新页面生效。` }
+    }
+    return { kind: 'output', text: `**语音朗读**\n\n每条回复完成后用云端语音念出来（与 CLI/APK 同一音色库）。\n\n- 开关：**设置 → 语音朗读 → 自动朗读回复**\n- 音色：${VOICES}\n- 语速：设置页滑块（-50% ~ +100%）\n\n配置存在浏览器本地，三端各存各的（CLI 存 config.json，APK 存 SharedPreferences）。` }
   }
   if (name === 'mail') {
     // 邮箱配置存在 mail-mcp-config.mjs（MCP 邮件服务共用同一份）。
@@ -3362,6 +3371,41 @@ const server = http.createServer(async (req, res) => {
         return json(res, 404, { error: `未知插件操作: ${action}` })
       }
       // 【已删除 2026-10-03】/api/backup 端点（自动备份功能下线）
+      // ── TTS 合成（2026-10-11 加）──────────────────────────────
+      //
+      // Web 端的「正文语音朗读」—— 复用 CLI 的 edge-tts（同一份音色表、
+      // 同一个免费端点），合成 mp3 直接返回字节流。
+      //
+      // 为什么不在前端用 `speechSynthesis`：
+      //   · 音色取决于用户系统（Android Chrome 上通常只有一个机械音）
+      //   · 无法复用 CLI/APK 的音色配置（yunxia / xiaoxiao / 东北话…）
+      //   · 云端合成音质明显好（神经网络语音）
+      //
+      // GET /api/tts?text=...&voice=yunxia&rate=%2B0%25
+      if (req.method === 'GET' && url.pathname === '/api/tts') {
+        const text = (url.searchParams.get('text') || '').trim()
+        if (!text) return json(res, 400, { error: '缺少 text' })
+        if (text.length > 2000) return json(res, 400, { error: '文本过长（上限 2000 字）' })
+        const voice = url.searchParams.get('voice') || 'yunxia'
+        const rate = url.searchParams.get('rate') || '+0%'
+        try {
+          const { synthesize } = await import('../core/phone/edge-tts.mjs')
+          const tmp = join(homedir(), '.claude-code-mobile', `tts-web-${Date.now()}.mp3`)
+          const r = await synthesize(text, { voice, rate, outFile: tmp, timeout: 30000 })
+          if (!r.ok) return json(res, 502, { error: r.error || '合成失败' })
+          const buf = readFileSync(r.file)
+          try { unlinkSync(r.file) } catch {}
+          res.writeHead(200, {
+            'Content-Type': 'audio/mpeg',
+            'Content-Length': buf.length,
+            'Cache-Control': 'no-store',
+          })
+          return res.end(buf)
+        } catch (e) {
+          return json(res, 500, { error: e?.message || String(e) })
+        }
+      }
+
       // Present 工具展示的本地文件（图片/视频）读取。
       // 安全：只允许 workspace 根目录内的文件，且后缀在图片/视频白名单，防目录穿越与任意文件读取。
       if (req.method === 'GET' && url.pathname === '/api/present-file') {

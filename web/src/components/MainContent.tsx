@@ -3392,6 +3392,36 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
           return newMsgs;
         });
 
+        // 【2026-10-11 加】正文语音朗读（/voice 的 Web 实现）
+        //
+        // 与 CLI/APK 同一份配置（localStorage 的 voice_enabled / voice_name /
+        // voice_rate —— 设置页可改，/voice 命令也认）。
+        //
+        // 服务端合成（复用 core/phone/edge-tts.mjs，音色与 CLI 一致），
+        // 前端用 <audio> 播放。
+        try {
+          if (localStorage.getItem('voice_enabled') === '1' && full) {
+            const voice = localStorage.getItem('voice_name') || 'yunxia'
+            const rate = localStorage.getItem('voice_rate') || '+0%'
+            // 文本清洗：去掉 markdown 标记 / 代码块 / URL（念出来没意义）
+            const clean = full
+              .replace(/```[\s\S]*?```/g, '')
+              .replace(/`[^`]*`/g, '')
+              .replace(/!?\[[^\]]*\]\([^)]*\)/g, '')
+              .replace(/https?:\/\/\S+/g, '')
+              .replace(/[#*_>~-]/g, '')
+              .trim()
+              .slice(0, 2000)
+            if (clean) {
+              const url = `/api/tts?text=${encodeURIComponent(clean)}&voice=${encodeURIComponent(voice)}&rate=${encodeURIComponent(rate)}`
+              const audio = new Audio(url)
+              audio.play().catch(() => { /* 浏览器拦截自动播放，静默 */ })
+              // 挂到 window 上供 /voice stop 停
+              ;(window as any).__ccmAudio = audio
+            }
+          }
+        } catch (_) { /* 朗读失败不影响对话 */ }
+
         // Refresh conversation to get generated title (if any)
         // 标题生成是异步的，可能需要几秒钟，所以需要延迟轮询
         if (conversationId) {
