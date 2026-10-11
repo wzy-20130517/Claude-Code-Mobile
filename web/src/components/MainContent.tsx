@@ -1161,9 +1161,17 @@ const MessageList = React.memo<MessageListProps>(({
                 // - Complete with offset: show only final text
                 // - Complete without offset: show full text (fallback)
                 // During streaming: compute pending text (text after last tool's textBefore)
+                //
+                // 【2026-10-11 修算法】原来是把所有 tc.textBefore.length **累加** ——
+                // 但 textBefore 是**累计值**（每个都包含前面所有正文），累加等于把
+                // 同一段文字数了好几遍。三个工具各带 100/200/300 字 → 累加得 600，
+                // 而实际只有 300 字 → slice(600) 把还在生成的正文整段切掉（用户看到
+                // 「正文不出现」）。
+                // 正确算法：取**最大值**（= 最后一个有 textBefore 的工具的长度 = 已消费的正文长度）。
                 let consumedLen = 0;
                 for (const tc of visibleToolCalls) {
-                  if (tc.textBefore) consumedLen += tc.textBefore.length;
+                  const len = String(tc.textBefore || '').length;
+                  if (len > consumedLen) consumedLen = len;
                 }
                 // Text currently being typed that hasn't been associated with a tool yet
                 const pendingWorkText_ui = isCurrentlyStreaming ? fullText.slice(consumedLen).trim() : '';
@@ -1232,12 +1240,26 @@ const MessageList = React.memo<MessageListProps>(({
 
                           return (
                             <div key={tc.id || tcIdx}>
-                              {/* Interleaved text: what the model said BEFORE this tool call */}
-                              {tc.textBefore && (
-                                <div className="text-[13px] text-claude-textSecondary px-1 py-1.5 leading-relaxed">
-                                  {tc.textBefore}
-                                </div>
-                              )}
+                              {/* Interleaved text: what the model said BEFORE this tool call。
+                                  【2026-10-11 修重复显示】tc.textBefore 是**累计值**
+                                  （server.mjs 的 textSoFar = runSnapshot.text，每轮 +=），
+                                  原样渲染会让第二个工具把第一个工具的正文再显示一遍：
+                                    工具1: "正文1"           → 显示 "正文1"
+                                    工具2: "正文1正文2"      → 显示 "正文1正文2"  ← 重复
+                                  这里做前缀差（增量 = 当前 - 上一个），与 APK 的
+                                  buildInterleavedSegments 同一算法。 */}
+                              {(() => {
+                                const raw = String(tc.textBefore || '');
+                                if (!raw) return null;
+                                const prevRaw = tcIdx > 0 ? String(visibleToolCalls[tcIdx - 1]?.textBefore || '') : '';
+                                const delta = prevRaw && raw.startsWith(prevRaw) ? raw.slice(prevRaw.length) : raw;
+                                if (!delta.trim()) return null;
+                                return (
+                                  <div className="text-[13px] text-claude-textSecondary px-1 py-1.5 leading-relaxed">
+                                    {delta.trim()}
+                                  </div>
+                                );
+                              })()}
                               {/* Tool card */}
                               <div className="text-[13px] bg-black/5 dark:bg-black/20 rounded-lg overflow-hidden border border-black/5 dark:border-white/5 mx-1 w-full">
                                 <div
