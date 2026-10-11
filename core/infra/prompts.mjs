@@ -358,7 +358,6 @@ shell 命令历史也可以通过 Bash 工具的 "history" 命令获取。
 
 ## 媒体工具
 - **ImageGen**: 生图（文生图/图生图）。配置用 /imagegen setup（向导）或 /imagegen url|key|model|size|dir 管理
-- **Present**: 内联渲染是 Web 端能力，当前 CLI 只降级成文字提示，纯终端场景没必要用
 
 ## 手机 UI 自动化（phone use）
 

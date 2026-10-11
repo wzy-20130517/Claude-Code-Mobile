@@ -32,7 +32,6 @@ import { SkillLoader, expandActiveSkill, globalSkillsDir } from '../core/command
 import { backupBeforeCompact } from '../core/session/compact-trash.mjs'
 import { listTrash, restoreTrash, clearTrash } from '../core/session/trash.mjs'
 import { MultiUndoStore } from '../core/session/undo-multi.mjs'
-import { PresentTool } from '../core/tools/present-tool.mjs'
 import { HookManager } from '../core/infra/hooks.mjs'
 // 轮数上限从单一真值源取，避免 Web 侧硬编码数字漂移
 import { NORMAL_MAX_TURNS } from '../core/agent/plan.mjs'
@@ -676,7 +675,7 @@ function isInternalAgentHistoryMessage(entry) {
     // mid-turn steering 注入格式：用户的话本身单独有气泡，这层包装是给模型看的
     || /^（执行中补充指令 \/ mid-turn steering）/.test(text)
 }
-function toUiMessages(history = [], workspaceForPresent = '') {
+function toUiMessages(history = []) {
   const output = []
   const getBlocks = entry => Array.isArray(entry?.content) ? entry.content : []
   const getUiAttachments = entry => getBlocks(entry).filter(block => block?.type === 'web_attachment').map(block => ({ id: block.id, fileId: block.id, file_name: block.file_name, fileName: block.file_name, file_type: block.file_type, fileType: block.file_type, mime_type: block.mime_type, mimeType: block.mime_type, file_size: block.file_size, size: block.file_size }))
@@ -708,34 +707,22 @@ function toUiMessages(history = [], workspaceForPresent = '') {
         if (!b) return null
         if (b.type === 'text') { consumed += String(b.text || ''); return null }
         if (b.type !== 'tool_use') return null
-        return { id: b.id, name: b.name || 'Tool', input: JSON.stringify(b.input || {}, null, 2), result: '', status: 'done', textBefore: consumed }
+        // 【2026-10-11 修断链】原来这里把 input 序列化成**字符串**传给前端。
+        // 但前端**全部按对象消费**：
+        //   · normalizeMessageDocuments：`tc.input?.file_path` / `tc.input?.content`
+        //     → DocumentCard 推导（刷新后一个都出不来）
+        //   · ToolDiffView：`input.old_string` / `input.new_string` → diff 视图
+        //   · getToolStats / hasExpandableContent：读 input 的字段
+        // 只有 MainContent:1219 一处做了 `typeof === 'string'` 兼容。
+        // 结果：**流式期间正常（前端自己存的是对象），一刷新全废**。
+        // 改为直接传对象（JSON 响应里本来就是对象，不需要手动序列化）。
+        return { id: b.id, name: b.name || 'Tool', input: b.input || {}, result: '', status: 'done', textBefore: consumed }
       }).filter(Boolean)
-      // Present 工具调用本身就落在 history 的 tool_use 里，重载会话时反解出来，
-      // 这样刷新页面后内联展示（SVG/图片等）依然存在，不用额外存一份。
-      const presents = blocks
-        .filter(b => b?.type === 'tool_use' && b.name === 'Present' && b.input && b.input.kind)
-        .map(b => ({
-          kind: String(b.input.kind),
-          title: b.input.title ? String(b.input.title) : '',
-          caption: b.input.caption ? String(b.input.caption) : '',
-          content: b.input.content ? String(b.input.content) : '',
-          // 落盘的 input.paths 是原始路径；前端只需要 path/name 两个字段
-          files: Array.isArray(b.input.paths)
-            ? b.input.paths.map(p => {
-              const raw = String(p)
-              // Agent 可能传相对路径；present-file 接口要绝对路径，用 workspace 补全
-              const abs = raw.startsWith('/') ? raw : (workspaceForPresent ? resolve(workspaceForPresent, raw) : raw)
-              return { path: abs, name: abs.split('/').pop() || abs }
-            })
-            : [],
-          params: Array.isArray(b.input.params) ? b.input.params : [],
-          at: index * 1000 + 1,
-        }))
-      if (text.trim() || tools.length > 0 || entry.reasoning_content || presents.length) {
+      if (text.trim() || tools.length > 0 || entry.reasoning_content) {
         // isCommandOutput：slash 命令的输出（终端风格纯文本，靠缩进对齐）。
         // 必须带到前端 —— 它决定用 <pre> 还是 Markdown 渲染。
         // 不带的话刷新页面后缩进又丢了，用户会看到「刚敲完是对的，刷新就乱了」。
-        output.push({ id: `m-${index}`, role: 'assistant', content: text, reasoning: String(entry.reasoning_content || ''), tools, presents, historyIndex: index, isCommandOutput: entry.isCommandOutput === true })
+        output.push({ id: `m-${index}`, role: 'assistant', content: text, reasoning: String(entry.reasoning_content || ''), tools, historyIndex: index, isCommandOutput: entry.isCommandOutput === true })
       }
     }
   }
@@ -775,7 +762,7 @@ function sessionPayload(runtime) {
     contextTokens: realTokens || estimatedTokens,
     contextTokensExact: realTokens > 0,
     contextLimit: config.maxContextTokens || 1000000,
-    createdAt: runtime.createdAt || null, updatedAt: runtime.updatedAt || null, running: !!runtime.running, messages: toUiMessages(history, runtime.workspacePath || ''),
+    createdAt: runtime.createdAt || null, updatedAt: runtime.updatedAt || null, running: !!runtime.running, messages: toUiMessages(history),
     // 中断残局：前端据此显示「上一轮被打断，点此继续」
     interrupted: runtime.interruptedRun || null,
     // 运行时指标：轮数/首字延迟/吞吐/耗时构成。**直接复用 CLI 的 agent.getMetrics()**，
@@ -873,7 +860,7 @@ function listSessions({ withMessages = false } = {}) {
       createdAt: data.createdAt || null, updatedAt: data.updatedAt || null, running: false,
     }
     if (!withMessages) return { ...base, messageCount: Array.isArray(data.messages) ? data.messages.length : 0 }
-    return { ...base, messages: toUiMessages(data.messages || [], base.workspacePath || '') }
+    return { ...base, messages: toUiMessages(data.messages || []) }
   }).filter(Boolean).sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
 }
 /**
@@ -2220,7 +2207,7 @@ async function executeSlashCommand(runtime, raw) {
     const p = args.join(' ').trim()
     const abs = p.startsWith('/') ? p : join(runtime.workspacePath || loadWebSettings().workspacePath, p)
     if (!existsSync(abs)) return { kind: 'output', text: `文件不存在：\`${abs}\`` }
-    emit(runtime, 'present', { kind: 'image', title: p, paths: [abs] })
+    emit(runtime, 'image', { title: p, path: abs })
     return { kind: 'output', text: `已展示：\`${p}\`` }
   }
   if (name === 'files') {
@@ -2426,7 +2413,13 @@ async function buildAgent(runtime) {
   // 【2026-09-20 清理】原来这里传了 includeRestart: false —— 但 createEngineToolkit
   // 根本没有这个参数（Restart 工具 2026-08-25 就整个删了，CLI 也没有）。
   // 传一个不存在的参数会让人以为「Web 禁用了重启，CLI 有」，属于误导。
-  includeTermuxTools: true, includeScreencap: false, includePhoneTools: true, contextFiles: webContext, memoryPath: WEB_MEMORY_PATH, memoryLabel: 'Web Memory', onPresent: payload => emit(runtime, 'present', payload), systemPromptBase: sessionPrompt, sessionStartPrompt: WEB_SESSION_START_PROMPT,
+  includeTermuxTools: true, includeScreencap: false, includePhoneTools: true, contextFiles: webContext, memoryPath: WEB_MEMORY_PATH, memoryLabel: 'Web Memory', systemPromptBase: sessionPrompt, sessionStartPrompt: WEB_SESSION_START_PROMPT,
+  // 【2026-10-11】ImageGen 生成图后自动展示。Present 工具已下线，但
+  // ImageGen 仍需要「产出可视内容」的通知通道 —— 发 image 事件（前端渲染内联图）。
+  onPresent: payload => {
+    const first = Array.isArray(payload?.paths) ? payload.paths[0] : ''
+    if (first) emit(runtime, 'image', { title: first.split('/').pop() || first, path: first })
+  },
   // 子 Agent 共用根 Agent 的权限裁决。
   // 不传的话 engine-setup 默认 `async () => true`（全放行）—— 子 Agent 就成了
   // 绕过 /permissions 的后门（default 模式的装饰工具拦截、plan 模式的写操作限制全部失效）。
@@ -2456,12 +2449,11 @@ async function buildAgent(runtime) {
   includeDshPlugin: true,
   extraTools: [
     ...sharedMcpTools,
-    new PresentTool({ cwd: workspace, onPresent: payload => emit(runtime, 'present', payload) }),
     // QQ 工具：桥没起来时**不注册** —— 否则模型看到工具名会去调，
     // 拿到「桥不可用」的错误，然后归因成自己用错了参数反复重试。
     // 工具清单里没有 = 模型不会尝试，这是更干净的失败方式。
     ...(qqBridgeRef ? [new QQPushTool(qqBridgeRef), new QQRecallTool(qqBridgeRef)] : []),
-  ], systemPromptSuffix: `\n# Web 运行边界\n当前 workspace: ${workspace}\n当前 session: ${runtime.id}\n不要使用 CLI 终端语境解释 Web 交互。\n\n# 内联展示（Present）\n写完 SVG/HTML 动画、生成图表、从视频抽帧后，用 **Present** 工具把结果直接展示在对话里，用户能当场看到渲染效果，而不是读源码或文件路径。\n- SVG 动画/图形 → kind=svg，content 传源码\n- 完整 HTML（含 JS 交互）→ kind=html，沙箱 iframe 渲染\n- 流程图/时序图 → kind=mermaid\n- 图片文件（含视频抽帧）→ kind=image 单张 / kind=images 多张网格，paths 传路径\n- 视频文件 → kind=video\n- 需要用户调参时用 params 声明数值参数，前端在画面下生成滑块。拖动时热更新、动画不重启，写法优先级：\n  1) CSS 变量（最稳）：参数名 speed → content 里写 var(--speed)，例 animation-duration: calc(60s / var(--speed))\n  2) JS 回调：读 window.PARAMS.speed，并设 window.onParamChange = (name, value) => { 调整转速等 }\n  3) {{speed}} 占位符会整体重渲染（动画从头播），只用于静态图\n- 例：地球自转 → kind=svg 或 html，自转速度用 var(--speed) 驱动，params: [{ name:'speed', label:'转速', min:0.1, max:5, step:0.1, value:1 }]，用户拖条即时变速且不跳帧\n展示是额外动作，不替代文字说明：该解释的照常说。\n`, getRuntimeModelInfo: () => ({ providerId, providerName: provider.name, model: modelForRuntime(runtime, provider) || provider.model, protocol: provider.protocol || 'openai', api }), onPermissionRequest: canRunWebTool })
+  ], systemPromptSuffix: `\n# Web 运行边界\n当前 workspace: ${workspace}\n当前 session: ${runtime.id}\n不要使用 CLI 终端语境解释 Web 交互。\n\n# 展示东西 = 写文件\n想让用户看到 SVG/HTML 动画、图表、长文档时，**用 Write 写成一个文件**（.html/.svg/.md），前端会自动把文件渲染成可点击的文档卡片。\n- SVG 动画/图形 → 写 .svg\n- 完整 HTML（含 JS 交互）→ 写 .html\n- 长文档/报告 → 写 .md\n- 图表/流程图 → 写 .html（内嵌 SVG 或 CDN 库）或 .svg\n- 图片/视频文件 → 已经在磁盘上的，直接在回复里写出路径\n不要写一段短代码就为它建文件 —— 只有值得单独成篇的内容才写文件。\n写完在回复里用一句话说明文件在哪、内容是什么。\n`, getRuntimeModelInfo: () => ({ providerId, providerName: provider.name, model: modelForRuntime(runtime, provider) || provider.model, protocol: provider.protocol || 'openai', api }), onPermissionRequest: canRunWebTool })
   toolkit.bindApi(api)
 
   // 识图链路：vision=true 的当前 Provider 优先；否则（或当前视觉失败）走 Web 配置 6 的 sotamodel claude-opus-5，最后 tesseract。
@@ -2525,7 +2517,11 @@ async function buildAgent(runtime) {
       // 用户看到的就是「AI 一口气把话全说完了」。
       // 这里把「到此刻为止累计的正文」作为 textBefore 发出去（前端按长度切分）。
       const textSoFar = runtime.runSnapshot?.text || ''
-      emit(runtime, 'tool_start', { id: block.id, name: block.name, input: JSON.stringify(block.input || {}, null, 2), textBefore: textSoFar })
+      // 【2026-10-11 同批修】input 原来是 JSON.stringify 的字符串，但前端
+      // 直接当对象用（MainContent:2394 `existing.input = toolEvent.tool_input`、
+      // 2396 `input: toolEvent.tool_input || {}`）—— 字符串塞进去后
+      // ToolDiffView / DocumentCard 推导全部读不到字段。
+      emit(runtime, 'tool_start', { id: block.id, name: block.name, input: block.input || {}, textBefore: textSoFar })
     }, onToolResult: (_tool, block, result, meta = {}) => {
       emit(runtime, 'tool_result', { id: block?.id, result: typeof result === 'string' ? result : JSON.stringify(result ?? '', null, 2), error: !!meta.error })
       // 【检查点】工具结果是天然的分段边界：这一步做完了，落一次盘
@@ -3583,7 +3579,7 @@ const server = http.createServer(async (req, res) => {
               providerModel: loadWebConfig().providers[data.providerId]?.model || '',
               workspacePath: data.workspacePath || loadWebSettings().workspacePath,
               createdAt: data.createdAt, updatedAt: data.updatedAt, running: false,
-              messages: toUiMessages(data.messages || [], data.workspacePath || loadWebSettings().workspacePath),
+              messages: toUiMessages(data.messages || []),
             })
           }
           return json(res, 404, { error: 'Session not found' })

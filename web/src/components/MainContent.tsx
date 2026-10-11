@@ -8,7 +8,6 @@ import { getConversation, sendMessage, createConversation, getUser, updateConver
 import SlashCommandMenu, { SlashSuggestion } from './SlashCommandMenu';
 import { addStreaming, removeStreaming, isStreaming } from '../streamingState';
 import MarkdownRenderer from './MarkdownRenderer';
-import PresentBlock from './PresentBlock';
 import ResearchPanel from './ResearchPanel';
 import ModelSelector, { SelectableModel } from './ModelSelector';
 import FileUploadPreview, { PendingFile } from './FileUploadPreview';
@@ -1338,10 +1337,19 @@ const MessageList = React.memo<MessageListProps>(({
               ) : (
                 <MarkdownRenderer content={(msg as any)._finalText ?? extractTextContent(msg.content)} citations={msg.citations} />
               )}
-              {Array.isArray((msg as any).presents) && (msg as any).presents.length > 0 && (
-                <div className="mt-1">
-                  {(msg as any).presents.map((p: any, pi: number) => (
-                    <PresentBlock key={`${p?.at || pi}-${pi}`} payload={p} />
+              {/* 【2026-10-11】/image 命令展示的本地图片（原走 Present 事件，Present 下线后改专用事件）。
+                  只做「显示一张本地图」，不带 Present 那套沙箱/参数滑块 —— 那是给 Agent 生成内容用的。 */}
+              {Array.isArray((msg as any).localImages) && (msg as any).localImages.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  {((msg as any).localImages as { title: string; path: string }[]).map((im, i) => (
+                    <div key={`${im.path}-${i}`} className="rounded-lg overflow-hidden border border-black/8 dark:border-white/10">
+                      <img
+                        src={`/api/present-file?path=${encodeURIComponent(im.path)}`}
+                        alt={im.title || im.path}
+                        className="max-w-full block"
+                        loading="lazy"
+                      />
+                    </div>
                   ))}
                 </div>
               )}
@@ -2352,6 +2360,20 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                     const last = prev[prev.length - 1];
                     if (last && last.role === 'user') return prev;
                     return [...prev, { id: `steer-${Date.now()}`, role: 'user', content: String(data.content || ''), steering: true } as any];
+                  });
+                }
+                // 【2026-10-11】/image 命令：展示本地图片（原 present 事件，Present 下线后独立）
+                if (event === 'image' && data && data.path) {
+                  setMessagesFor(convId, prev => {
+                    const newMsgs = [...prev];
+                    for (let i = newMsgs.length - 1; i >= 0; i--) {
+                      if (newMsgs[i]?.role === 'assistant') {
+                        const prevList = Array.isArray(newMsgs[i].localImages) ? newMsgs[i].localImages : [];
+                        newMsgs[i] = { ...newMsgs[i], localImages: [...prevList, data] };
+                        break;
+                      }
+                    }
+                    return newMsgs;
                   });
                 }
                 if (event === 'turn_limit' && data) {
@@ -3457,14 +3479,14 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
             getContextSize(activeId).then(setContextInfo).catch(() => {});
           }
         }
-        // Present 工具：Agent 主动推送的可视内容（SVG/HTML/图表/图片/视频），挂到当前助手消息上内联渲染
-        if (event === 'present' && data && data.kind) {
+        // 【2026-10-11】/image 命令：展示本地图片（原 present 事件，Present 下线后独立）
+        if (event === 'image' && data && data.path) {
           setMessagesFor(conversationId!, prev => {
             const newMsgs = [...prev];
             for (let i = newMsgs.length - 1; i >= 0; i--) {
               if (newMsgs[i]?.role === 'assistant') {
-                const prevList = Array.isArray(newMsgs[i].presents) ? newMsgs[i].presents : [];
-                newMsgs[i] = { ...newMsgs[i], presents: [...prevList, data] };
+                const prevList = Array.isArray(newMsgs[i].localImages) ? newMsgs[i].localImages : [];
+                newMsgs[i] = { ...newMsgs[i], localImages: [...prevList, data] };
                 break;
               }
             }
@@ -3920,20 +3942,6 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
             return newMsgs;
           });
         }
-        // Present 工具：Agent 主动推送的可视内容（SVG/HTML/图表/图片/视频），挂到当前助手消息上内联渲染
-        if (event === 'present' && data && data.kind) {
-          setMessagesFor(conversationId, prev => {
-            const newMsgs = [...prev];
-            for (let i = newMsgs.length - 1; i >= 0; i--) {
-              if (newMsgs[i]?.role === 'assistant') {
-                const prevList = Array.isArray(newMsgs[i].presents) ? newMsgs[i].presents : [];
-                newMsgs[i] = { ...newMsgs[i], presents: [...prevList, data] };
-                break;
-              }
-            }
-            return newMsgs;
-          });
-        }
         if (event === 'context_size' && data) {
           setContextInfo({ tokens: data.tokens, limit: data.limit, exact: !!data.exact });
         }
@@ -4136,20 +4144,6 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
             const lastMsg = newMsgs[newMsgs.length - 1];
             if (lastMsg && lastMsg.role === 'assistant') {
               lastMsg.thinking_summary = message;
-            }
-            return newMsgs;
-          });
-        }
-        // Present 工具：Agent 主动推送的可视内容（SVG/HTML/图表/图片/视频），挂到当前助手消息上内联渲染
-        if (event === 'present' && data && data.kind) {
-          setMessagesFor(conversationId, prev => {
-            const newMsgs = [...prev];
-            for (let i = newMsgs.length - 1; i >= 0; i--) {
-              if (newMsgs[i]?.role === 'assistant') {
-                const prevList = Array.isArray(newMsgs[i].presents) ? newMsgs[i].presents : [];
-                newMsgs[i] = { ...newMsgs[i], presents: [...prevList, data] };
-                break;
-              }
             }
             return newMsgs;
           });
