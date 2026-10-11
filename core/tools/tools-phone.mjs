@@ -671,6 +671,8 @@ export class PhoneSnapshotTool extends Tool {
         type: 'object',
         properties: {
           interactive_only: { type: 'boolean', description: '只列可点击/带 id 的元素（默认 true，省 token）' },
+          max_nodes: { type: 'number', description: '最多返回多少个元素节点（默认 300）' },
+          no_system_ui: { type: 'boolean', description: '滤掉状态栏/输入法等系统 UI（默认 true）' },
           include_text: { type: 'boolean', description: '额外用 uiautomator 补文本内容（慢，且界面有动画时会失败）' },
         },
       },
@@ -699,7 +701,7 @@ export class PhoneSnapshotTool extends Tool {
       const r = await vdCall('snapshot', {
         interactive_only: input.interactive_only !== false,
         max_nodes: input.max_nodes || 300,
-        no_system_ui: true,
+        no_system_ui: input.no_system_ui !== false,
       }, 30000)
       if (r.ok && r.text) {
         markVdRefs(r.text)

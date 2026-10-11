@@ -467,7 +467,7 @@ export class SubAgentTool extends Tool {
         properties: {
           subagent_type: {
             type: 'string',
-            description: '子 agent 类型（builtin: general-purpose/Explore/Plan/Coordinator，或 .claude/agents 自定义名）。默认 general-purpose。'
+            description: '子 agent 类型。内置：general-purpose（全工具，独立完成复杂任务）/ Explore（只读，调研代码库）/ Plan（只读+TodoWrite，制定执行计划）/ Coordinator（编排多个 worker 并行）。也可填 .claude/agents 自定义名（见系统提示词）。默认 general-purpose。'
           },
           description: {
             type: 'string',

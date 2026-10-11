@@ -222,10 +222,9 @@ export class ScreencapTool extends Tool {
     super({
       name: 'Screencap',
       description:
-        '截取当前手机屏幕并用 OCR 提取屏幕文字。' +
+        '截取当前手机屏幕，截图以原生多模态直接注入对话供主模型亲自查看；直传失败才降级 OCR 转述（会标注）。' +
         '用户说「看看我屏幕」「截屏看看」「屏幕上有什么字」时用。' +
-        '通道走 /device 配置（Shizuku 优先，不可用则本机 adb）。' +
-        '注意：OCR 只输出文字，不含画面布局。',
+        '通道走 /device 配置（Shizuku 优先，不可用则本机 adb）。',
       input_schema: {
         type: 'object',
         properties: {
