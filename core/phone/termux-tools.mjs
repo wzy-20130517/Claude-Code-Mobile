@@ -9,9 +9,8 @@ import { existsSync } from 'node:fs'
  *
  * 【为什么要探测】
  * 这套工具依赖 Termux 的 termux-api 包（termux-notification 等）。
- * 在 CCM 模式（proot Ubuntu）下这些命令不存在 —— 那时应该走原生桥
- * （见 ccm-adapters.mjs，会在运行时把工具实现替换掉）。
- * 如果桥不可用又不在 Termux 里，这里给出明确提示，而不是含糊的 ENOENT。
+ * 不在 Termux 里（如 proot 容器）时这些命令不存在，这里给出明确提示，
+ * 而不是含糊的 ENOENT。
  */
 function findTermuxBin(cmd) {
   // 1. Termux 标准路径
@@ -33,8 +32,8 @@ function termuxExec(cmd, args = [], timeout = 10000) {
   if (!bin) {
     throw new Error(
       `${cmd} 不可用。\n` +
-      `  · Termux 模式：需要安装 termux-api（pkg install termux-api）\n` +
-      `  · CCM 模式：应走原生桥（检查 CCM 核心服务是否启动）`
+      `  · 需要安装 termux-api（pkg install termux-api）\n` +
+      `  · 如果不在 Termux 环境（如 proot 容器），这套 Termux API 工具不可用`
     )
   }
   try {

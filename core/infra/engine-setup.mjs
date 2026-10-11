@@ -16,6 +16,9 @@ import {
   DeepMode, EnterDeepModeTool, ExitDeepModeTool, SubAgentTool, BUILTIN_SUBAGENT_TYPES,
 } from '../agent/plan.mjs'
 import { MemoryTool, UserInputHistoryTool, InputHistory } from '../agent/agent-tools.mjs'
+import { CommandExecTool } from '../agent/agent-tools.mjs'
+import { EnterWatchTool, ExitWatchTool } from '../agent/plan.mjs'
+import { DshPluginTool } from '../tools/tools-dsh-plugin.mjs'
 import { TavilySearchTool } from '../tools/tavily.mjs'
 import { termuxTools } from '../phone/termux-tools.mjs'
 import { LspTool } from '../tools/lsp.mjs'
@@ -63,6 +66,9 @@ import { join } from 'node:path'
  * @param {function} [opts.onPermissionRequest]  根 Agent 与 SubAgent 共用权限裁决
  * @param {string} [opts.undoRoot]  可选独立 Undo 存储目录
  * @param {function|object} [opts.getRuntimeModelInfo] 当前 Provider/model/protocol（函数可动态刷新）
+ * @param {function} [opts.commandExecHandler]  传了才注册 CommandExec 工具（Web 传自己的命令分发）
+ * @param {function} [opts.watchModeSetter]     传了才注册 EnterWatch/ExitWatch（参数：on:boolean）
+ * @param {boolean} [opts.includeDshPlugin=false] 是否注册 DshPlugin（默认不注册，显式开启）
  */
 export function createEngineToolkit(opts = {}) {
   const cwd = opts.cwd || process.cwd()
@@ -193,6 +199,24 @@ export function createEngineToolkit(opts = {}) {
     deepMode.disable()
     if (liveAgent) liveAgent.maxTurns = deepMode.getMaxTurns()
   }))
+
+  // 持续模式（watch）工具：只有调用方传了 setter 才注册。
+  // CLI 在 index.mjs 自己注册（带 rl 交互），Web 传 runtime.agent 的 setter。
+  if (typeof opts.watchModeSetter === 'function') {
+    registry.register(new EnterWatchTool(() => opts.watchModeSetter(true)))
+    registry.register(new ExitWatchTool(() => opts.watchModeSetter(false)))
+  }
+
+  // CommandExec：跑程序内 slash 命令。CLI 在 index.mjs 传 handleCommand 注册；
+  // Web 传自己的 executeSlashCommand 包装（避免两套命令实现漂移）。
+  if (typeof opts.commandExecHandler === 'function') {
+    registry.register(new CommandExecTool(opts.commandExecHandler))
+  }
+
+  // DSH 插件宿主管理（默认不注册 —— 只有显式开启的宿主才用得上）
+  if (opts.includeDshPlugin === true) {
+    registry.register(new DshPluginTool())
+  }
 
   let subAgentTool = null
   if (opts.includeSubAgent !== false) {

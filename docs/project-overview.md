@@ -350,9 +350,9 @@ noninteractive.mjs           9
 
 `ViewImage`｜`ViewVideo`（关键帧抽帧）｜`Screencap`（Shizuku 截图+OCR）｜`ImageGen`（生图/改图）｜`FindImage`（Pexels 找图）｜`ReverseImage`（以图识图）
 
-### 手机控制（10，Shizuku/rish）
+### 手机控制（9，Shizuku/rish）
 
-`phone_snapshot`｜`phone_screenshot`｜`phone_click`｜`phone_tap_xy`｜`phone_type`｜`phone_swipe`｜`phone_key`｜`phone_wait`｜`phone_app`｜`say`（语音播报）
+`phone_snapshot`｜`phone_screenshot`｜`phone_click`｜`phone_tap_xy`｜`phone_type`｜`phone_swipe`｜`phone_key`｜`phone_wait`｜`phone_app`
 
 ### Termux 集成（10）
 
@@ -437,7 +437,7 @@ CLAUDE.md（Memory 工具 + /memory）、automem 自动提取（每轮后台）�
 MCP 客户端（stdio + http，/mcp 管理，CLI/Web 共享）、插件系统、hooks（SessionStart/PreToolUse/PostCompact 等 8 事件）、自定义命令（.claude/commands）、skills（SKILL.md + 缓存 + 按路径激活）。
 
 **移动端**
-Shizuku/rish 手机控制（快照式 UI 操作，不截图识图）、语音播报（say / Edge TTS）、Termux 十件套、X11/vscreen（跑桌面程序）、playwright-x11 包装。
+Shizuku/rish 手机控制（快照式 UI 操作，不截图识图）、Termux 十件套、X11/vscreen（跑桌面程序）、playwright-x11 包装。
 
 **消息通道**
 QQ 桥（私聊 + 群 @，按 turn 发消息、超长转图、未完成必回执）、CLI 对话同步到 QQ、QQPush/QQRecall 工具、邮件（QQ 邮箱 MCP）。

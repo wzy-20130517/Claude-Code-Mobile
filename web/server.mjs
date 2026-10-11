@@ -2324,46 +2324,6 @@ async function executeSlashCommand(runtime, raw) {
   const text = formatCommandResult(name, runtime, args)
   return text == null ? null : { kind: 'output', text }
 }
-/**
- * 原生桥的延迟重试。
- *
- * 【场景】Node 由 CcmService 启动，而桥服务器（127.0.0.1:3457）也在同一个
- * Service 里 —— 两者有启动竞态。若 Node 先就绪，第一次 applyNativeAdapters
- * 会探测失败，于是 toolkit 用 Termux 实现（sed/am 在 proot 里不存在）。
- * 而 buildAgent 有缓存，不会再走一遍适配 —— 用户会一直遇到「手机操作不生效」。
- *
- * 【做法】失败后挂一个轻量定时器（15 秒一次，最多 20 次 = 5 分钟），
- * 桥一就绪就立刻应用到**当前 toolkit**（原地改 execute，不用重建 agent）。
- * 成功后自动停。全程静默（只在 console 记一行），不影响用户操作。
- */
-let _adapterRetryTimer = null
-function scheduleNativeAdapterRetry(toolkit) {
-  if (_adapterRetryTimer) return
-  let tries = 0
-  const MAX_TRIES = 20
-  _adapterRetryTimer = setInterval(async () => {
-    tries++
-    if (tries > MAX_TRIES) {
-      clearInterval(_adapterRetryTimer)
-      _adapterRetryTimer = null
-      console.log('[CCM] 原生桥重试超时（5 分钟），放弃。手机操作将不可用 —— 检查无障碍服务是否开启。')
-      return
-    }
-    try {
-      const { applyNativeAdapters, shouldRetryNativeAdapters } = await import('../ccm-adapters.mjs')
-      if (!shouldRetryNativeAdapters()) {   // 已成功或超窗口
-        clearInterval(_adapterRetryTimer); _adapterRetryTimer = null; return
-      }
-      const r = await applyNativeAdapters(toolkit)
-      if (r.applied) {
-        clearInterval(_adapterRetryTimer)
-        _adapterRetryTimer = null
-        console.log(`[CCM] 原生桥已就绪（第 ${tries} 次重试），适配已应用: ${r.replaced.join(', ')}`)
-      }
-    } catch { /* 继续等 */ }
-  }, 15_000)
-  _adapterRetryTimer.unref?.()   // 不阻止进程退出
-}
 
 async function buildAgent(runtime) {
   if (runtime.agent) return runtime.agent
@@ -2436,7 +2396,31 @@ async function buildAgent(runtime) {
   // 【2026-09-20 清理】原来这里传了 includeRestart: false —— 但 createEngineToolkit
   // 根本没有这个参数（Restart 工具 2026-08-25 就整个删了，CLI 也没有）。
   // 传一个不存在的参数会让人以为「Web 禁用了重启，CLI 有」，属于误导。
-  includeTermuxTools: true, includeScreencap: false, includePhoneTools: true, contextFiles: webContext, memoryPath: WEB_MEMORY_PATH, memoryLabel: 'Web Memory', onPresent: payload => emit(runtime, 'present', payload), systemPromptBase: sessionPrompt, sessionStartPrompt: WEB_SESSION_START_PROMPT, extraTools: [
+  includeTermuxTools: true, includeScreencap: false, includePhoneTools: true, contextFiles: webContext, memoryPath: WEB_MEMORY_PATH, memoryLabel: 'Web Memory', onPresent: payload => emit(runtime, 'present', payload), systemPromptBase: sessionPrompt, sessionStartPrompt: WEB_SESSION_START_PROMPT,
+  // 【Web 补齐四个 CLI 工具】
+  //   CommandExec  —— 包装 executeSlashCommand，模型能跑程序内命令（/cost、/context 等）。
+  //                   不带 / 前缀的原始串传进去（工具描述已说明），内部自己加。
+  //   watchModeSetter —— EnterWatch/ExitWatch 直接切 runtime.agent.watchMode，
+  //                   与 /watch 命令同一状态源。注意 agent 可能在 setter 调用时才建好，
+  //                   所以用闭包惰性取 runtime.agent。
+  //   includeDshPlugin —— dsh-host 是纯 HTTP 服务，Termux 上可用，直接开。
+  commandExecHandler: async (input) => {
+    const raw = String(input || '').trim()
+    if (!raw) return '错误: 请提供命令名称'
+    const result = await executeSlashCommand(runtime, '/' + raw.replace(/^\/+/, ''))
+    if (!result) return `未找到命令: ${raw}`
+    if (result.kind === 'output') return String(result.text || '')
+    if (result.kind === 'prompt') return String(result.content || '')
+    if (result.kind === 'wizard') return `该命令需要交互式向导（${result.title || raw}），Web 里请让用户直接在输入框敲 /${raw}`
+    if (result.kind === 'select') return `该命令需要用户从列表选择（${result.title || raw}），Web 里请让用户直接在输入框敲 /${raw}`
+    return JSON.stringify(result)
+  },
+  watchModeSetter: (on) => {
+    if (!runtime.agent) return   // 还没建 agent 时静默跳过（下一轮会建）
+    runtime.agent.watchMode = !!on
+  },
+  includeDshPlugin: true,
+  extraTools: [
     ...sharedMcpTools,
     new PresentTool({ cwd: workspace, onPresent: payload => emit(runtime, 'present', payload) }),
     // QQ 工具：桥没起来时**不注册** —— 否则模型看到工具名会去调，
@@ -2446,30 +2430,6 @@ async function buildAgent(runtime) {
   ], systemPromptSuffix: `\n# Web 运行边界\n当前 workspace: ${workspace}\n当前 session: ${runtime.id}\n不要使用 CLI 终端语境解释 Web 交互。\n\n# 内联展示（Present）\n写完 SVG/HTML 动画、生成图表、从视频抽帧后，用 **Present** 工具把结果直接展示在对话里，用户能当场看到渲染效果，而不是读源码或文件路径。\n- SVG 动画/图形 → kind=svg，content 传源码\n- 完整 HTML（含 JS 交互）→ kind=html，沙箱 iframe 渲染\n- 流程图/时序图 → kind=mermaid\n- 图片文件（含视频抽帧）→ kind=image 单张 / kind=images 多张网格，paths 传路径\n- 视频文件 → kind=video\n- 需要用户调参时用 params 声明数值参数，前端在画面下生成滑块。拖动时热更新、动画不重启，写法优先级：\n  1) CSS 变量（最稳）：参数名 speed → content 里写 var(--speed)，例 animation-duration: calc(60s / var(--speed))\n  2) JS 回调：读 window.PARAMS.speed，并设 window.onParamChange = (name, value) => { 调整转速等 }\n  3) {{speed}} 占位符会整体重渲染（动画从头播），只用于静态图\n- 例：地球自转 → kind=svg 或 html，自转速度用 var(--speed) 驱动，params: [{ name:'speed', label:'转速', min:0.1, max:5, step:0.1, value:1 }]，用户拖条即时变速且不跳帧\n展示是额外动作，不替代文字说明：该解释的照常说。\n`, getRuntimeModelInfo: () => ({ providerId, providerName: provider.name, model: modelForRuntime(runtime, provider) || provider.model, protocol: provider.protocol || 'openai', api }), onPermissionRequest: canRunWebTool })
   toolkit.bindApi(api)
 
-  // 【CCM 原生适配】在 Android 原生环境里，把 phone/系统工具替换成无障碍实现。
-  // 只在 CCM_NATIVE_ADAPTERS=1 时尝试（CCM App 启动 Node 时会设这个变量），
-  // Termux 模式不受影响。探测失败会静默保持原实现。
-  if (process.env.CCM_NATIVE_ADAPTERS === '1') {
-    try {
-      const { applyNativeAdapters, shouldRetryNativeAdapters } = await import('../ccm-adapters.mjs')
-      const r = await applyNativeAdapters(toolkit)
-      if (r.applied) {
-        console.log(`[CCM] 原生适配已应用: ${r.replaced.join(', ') || '（无匹配工具）'}`)
-      } else {
-        console.log(`[CCM] 原生适配跳过: ${r.reason}`)
-        // 【2026-09-24 加】桥可能比 Node 后起来（都在 CcmService 里，有竞态）。
-        // 探测失败时不要就此认定「用不了」—— 5 分钟内允许重试。
-        //
-        // 重试机制：下面挂一个轻量定时器，每 15 秒探一次；
-        // 一旦桥就绪就立即把适配应用到当前 toolkit（原地改 execute，不需要重建 agent）。
-        if (shouldRetryNativeAdapters()) {
-          scheduleNativeAdapterRetry(toolkit)
-        }
-      }
-    } catch (e) {
-      console.warn('[CCM] 原生适配失败（保持原实现）:', e.message)
-    }
-  }
   // 识图链路：vision=true 的当前 Provider 优先；否则（或当前视觉失败）走 Web 配置 6 的 sotamodel claude-opus-5，最后 tesseract。
   // 备用 Provider 独立于当前会话 Provider，避免用户切到纯文本模型后彻底失去看图能力。
   setVisionConfig({ vision: !!provider.vision, model: activeModel || provider.model, providerId }, api, config.providers?.[config.visionProviderId || '6'] || null)

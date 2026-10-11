@@ -17,10 +17,9 @@
 // Android 自带 TTS 音质生硬，长句听着累。Edge 的神经网络语音（晓晓/云希）
 // 接近真人，做操作汇报时不刺耳。
 
-import { writeFileSync, readdirSync, unlinkSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
-import { execFile } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { request as httpsRequest } from 'node:https'
 
@@ -256,53 +255,4 @@ export async function synthesize(text, opts = {}) {
 
     req.end()
   })
-}
-
-const TTS_DIR = join(homedir(), '.claude-code-mobile')
-
-/**
- * 清理残留的 tts-*.mp3。
- * play 是异步的（termux-media-player 交给系统播放器后立即返回），
- * 所以不能播完立刻删——文件还在被读。改成删「超过 maxAgeMs 的旧文件」，
- * 既不影响正在播的，也不会长期堆积。
- */
-export function cleanupTtsFiles({ maxAgeMs = 60000, keepLatest = 0 } = {}) {
-  let removed = 0
-  try {
-    const files = readdirSync(TTS_DIR)
-      .filter(f => /^tts-\d+\.mp3$/.test(f))
-      .map(f => ({ f, t: Number(f.match(/\d+/)[0]) }))
-      .sort((a, b) => b.t - a.t)
-    const now = Date.now()
-    for (let i = keepLatest; i < files.length; i++) {
-      if (now - files[i].t < maxAgeMs) continue
-      try { unlinkSync(join(TTS_DIR, files[i].f)); removed++ } catch {}
-    }
-  } catch {}
-  return removed
-}
-
-/**
- * 合成并播放。
- *
- * 【为什么不 await 播放完成】
- * termux-media-player play 把文件交给系统播放器后【立即返回】，不等播完。
- * 所以它的回调不代表播放结束 —— 之前 await 它然后进程退出，声音只出了一半。
- * 现在 fire-and-forget：播放交给系统，我们只保证文件存在且不被提前删掉。
- *
- * 【文件什么时候删】
- * 不能播完就删（不知道什么时候播完），也不能立刻删（还在被读）。
- * 策略：每次播报前清理「60 秒以上的旧文件」，当前和上一个都保留。
- * 一句 25 字的播报大约 3~5 秒，60 秒足够放完。
- */
-export async function speak(text, opts = {}) {
-  // 先清旧的（不碰最近两个，避免删到正在播的）
-  cleanupTtsFiles({ maxAgeMs: 60000, keepLatest: 2 })
-  const r = await synthesize(text, opts)
-  if (!r.ok) return r
-  try {
-    const p = execFile('termux-media-player', ['play', r.file], () => {})
-    p.unref?.()   // 不让它拖住进程退出
-  } catch {}
-  return r
 }

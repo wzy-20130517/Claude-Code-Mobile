@@ -23,8 +23,8 @@
 
 import { Tool } from './tools.mjs'
 import { runShell, captureScreen, loadDeviceConfig, saveDeviceConfig, vdAlive, vdCall, vdStart } from '../phone/device.mjs'
-import { speak } from '../phone/edge-tts.mjs'
 import { loadImageBlock } from '../phone/image.mjs'
+
 import { execFile } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -1294,49 +1294,6 @@ export class PhoneWaitTool extends Tool {
   }
 }
 
-export class SayTool extends Tool {
-  constructor() {
-    super({
-      name: 'say',
-      description: '用语音播报一句话（Edge TTS 少年音，不占屏幕、不进截图/dump）。'
-        + '专为「用户不在 Termux 界面时也能知道进展」设计。\n'
-        + '【只在这几种时刻说】任务开始（说明大概要几步）、遇到障碍改路线、'
-        + '需要用户介入（等密码/等确认）、任务完成、任务失败。\n'
-        + '【禁止】逐步播报点击滑动等中间动作——那些用户切回终端就能看到，'
-        + '念出来只是噪音。一个多步任务通常只该说 2~4 次。\n'
-        + '一句话控制在 25 字内，说人话不念路径行号。\n'
-        + '【secret:true】只播报、终端不回显内容（结果行显示为「已播报（内容隐藏）」）。'
-        + '用于听写/答题等「答案不能出现在屏幕上」的场景：用户只能用耳朵听。',
-      input_schema: {
-        type: 'object',
-        properties: {
-          text: { type: 'string', description: '要念的话，25 字内，口语化' },
-          voice: { type: 'string', description: '可选音色短名或 Edge 完整音色名，如 yunxia、xiaoxiao、en-US-JennyNeural' },
-          style: { type: 'string', description: '可选语气预设：cheerful/excited/gentle/calm/serious/sad/angry/affectionate/chat/narration' },
-          styledegree: { type: 'number', description: '可选语气强度，0.01 到 2；1 为默认强度' },
-          secret: { type: 'boolean', description: '为 true 时终端不回显播报内容（听写场景用），默认 false' },
-        },
-        required: ['text'],
-      },
-    })
-  }
-
-  async execute(input) {
-    const text = String(input.text || '').trim()
-    if (!text) throw new Error('text 不能为空')
-    const ttsOpts = {}
-    if (input.voice) ttsOpts.voice = input.voice
-    if (input.style) ttsOpts.style = input.style
-    if (input.styledegree != null) ttsOpts.styledegree = input.styledegree
-    const r = await speak(text, ttsOpts)
-    if (!r.ok) throw new Error(`语音播报失败：${r.error}`)
-    // secret 模式不回显内容：听写场景下把词打在终端等于把答案摆出来。
-    // 只报字数，让用户确认播报确实发生了。
-    if (input.secret) return `已播报（内容隐藏，${[...text].length} 字符）`
-    return `已播报: ${text}`
-  }
-}
-
 // ── 应用中文名（label）读取 ──────────────────────────────────
 //
 // 【为什么需要】2026-10-04 用户点出：`phone_app list` 只给包名，
@@ -1931,7 +1888,7 @@ export class PhoneHandoffTool extends Tool {
 export const PHONE_TOOLS = [
   PhoneSnapshotTool, PhoneScreenshotTool, PhoneClickTool, PhoneTapXYTool,
   PhoneTypeTool, PhoneSwipeTool, PhoneScrollTool, PhoneKeyTool, PhoneWaitTool,
-  PhoneAppTool, SayTool,
+  PhoneAppTool,
   PhoneShellTool, PhoneVdTool, PhoneDeviceTool, PhoneHandoffTool,
 ]
 

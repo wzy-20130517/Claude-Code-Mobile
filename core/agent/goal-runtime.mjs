@@ -66,7 +66,7 @@ export function buildGoalContract(s) {
   L.push('')
   L.push('## 阻塞审计（调 blocked 前必须过）')
   L.push(`- 第一次遇到障碍**不准**判 blocked。同一个障碍必须连续 ${BLOCKED_STREAK_THRESHOLD} 个 goal turn 复现才算。当前该障碍已连续 ${s.blockedStreak} 轮${s.canDeclareBlocked ? '（已达阈值，可以判 blocked）' : `（未达 ${BLOCKED_STREAK_THRESHOLD}，继续想别的办法）`}。`)
-  L.push('- 只有这些算真阻塞：缺凭据/权限、必须用户拍板、外部条件不满足、同一技术故障反复失败。')
+  L.push('- 只有这些算真阻塞：缺凭据/权限、需要用户决策、外部条件不满足、同一技术故障反复失败。')
   L.push('- **不算阻塞**：活儿大、活儿难、慢、还没验证、不确定、想要更多轮次、想找用户确认一下。这些一律继续干。')
   L.push('- 但如果目标本身**不可能、自相矛盾、或不安全**，当轮直接判 blocked，不要白烧预算。')
   L.push('')

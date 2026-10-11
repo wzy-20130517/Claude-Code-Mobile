@@ -148,8 +148,7 @@ import {
 } from './core/infra/system-prompt-sections.mjs'
 // 会话历史回放（/resume 和重启后把上下文画到屏幕上，对齐官方）
 import { formatHistoryForReplay, sessionDivider } from './core/session/session-replay.mjs'
-// 正文语音朗读（/voice）：把助手正文自动念出来。跟 say 工具是两回事——
-// say 是模型主动调用的工具，这个是 UI 能力，模型不该知道它存在。
+// 正文语音朗读（/voice）：把助手正文自动念出来。这是 UI 能力，模型不该知道它存在。
 import {
   isVoiceEnabled, setVoiceEnabled, getVoice, setVoice, setVoiceRate,
   feedVoiceText, flushVoiceText, stopVoice, resetVoiceTurn, voiceStatus,
@@ -4241,7 +4240,7 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
         return queryCommands.greeting(args)
 
       // /voice — 正文语音朗读（豆包式：我说的正文自动念出来）
-      // 跟 say 工具的分工：say 是模型主动调的工具，这个是纯 UI 能力。
+      // 纯 UI 能力，模型不需要知道。
       // 音色/开关都写进 config.json（saveConfig 白名单里已登记 voice 字段）。
       case 'voice':
         return smallConfigCommands.voice(args)

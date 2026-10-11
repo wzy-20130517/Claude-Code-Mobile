@@ -55,7 +55,7 @@ export class GoalStatusTool extends Tool {
       name: 'GoalStatus',
       description: `设置当前目标的终态。这是目标唯一的正式出口。
 - complete：完成判据已被**实际验证**通过。只有计划/摘要/初稿/部分结果 → 不许用。预算快用完也不是完成的理由。
-- blocked：真正的僵局（缺凭据/权限、必须用户拍板、外部条件不满足、同一技术故障反复失败）。同一障碍需连续 ${BLOCKED_STREAK_THRESHOLD} 个 goal turn 复现才允许；未达阈值调用会被拒绝并告知还差几轮。目标本身不可能/矛盾/不安全则可当轮直接 blocked（用 impossible:true）。
+- blocked：真正的僵局（缺凭据/权限、需要用户决策、外部条件不满足、同一技术故障反复失败）。同一障碍需连续 ${BLOCKED_STREAK_THRESHOLD} 个 goal turn 复现才允许；未达阈值调用会被拒绝并告知还差几轮。目标本身不可能/矛盾/不安全则可当轮直接 blocked（用 impossible:true）。
 - paused：需要用户参与、暂时挂起。
 多数 goal turn **不该调这个工具**：还有实质工作就正常结束本轮，runtime 会自动给你下一轮。`,
       input_schema: {
