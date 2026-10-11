@@ -2571,27 +2571,71 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
     }
   }, [inputHeight]);
 
+  // 上一帧的 scrollHeight —— 用来区分「用户滚动」与「内容长高」
+  const lastScrollHeightRef = useRef(0);
+  // 【2026-10-11】程序滚动标志（scrollToBottom 执行期间为 true）。
+  // handleScroll 见到它就跳过 —— 否则会把 scrollTo 的中间态
+  // （scrollTop 旧值 / scrollHeight 新值）误判成「用户上翻」，
+  // 把 isAtBottomRef 打成 false，自动滚动随即停止 → 「滑到最低也不跟随」。
+  const programmaticScrollRef = useRef(false);
+
   const handleScroll = () => {
-    if (scrollContainerRef.current) {
-      const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
-      const isBottom = Math.abs(scrollHeight - clientHeight - scrollTop) < 50;
-      if (isBottom && userScrolledUpRef.current) {
-        // 用户自己滚回了底部，重新启用自动滚动
-        userScrolledUpRef.current = false;
-      }
-      if (!userScrolledUpRef.current) {
-        isAtBottomRef.current = isBottom;
-      }
-      // 【2026-10-10】「回到底部」按钮：不在底部就显示（对齐 APK
-      // 的 `AnimatedVisibility(visible = !followBottom)`）。
-      setShowScrollButton(!isBottom);
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const { scrollTop, scrollHeight, clientHeight } = el;
+    const distanceToBottom = scrollHeight - clientHeight - scrollTop;
+    const isBottom = distanceToBottom < 50;
+
+    // 【2026-10-11 修「滑到最低也不跟随」】
+    //
+    // 原实现只看距离，流式期间内容每帧都在长高 → scrollHeight 变大 →
+    // 程序滚动还没来得及跟上（下一帧才滚）→ 这一帧算出的 distance > 50 →
+    // isBottom=false → isAtBottomRef=false → **自动滚动被自己关掉**，
+    // 之后再也不跟随（除非用户再手动滚一次，但同样可能再被关掉）。
+    //
+    // 修法（对齐 APK 的第六版实现）：
+    //   · 内容长高（scrollHeight 变了）**不改** isAtBottomRef —— 那不是用户操作
+    //   · 只有「用户真的滚了」（scrollTop 变了而 scrollHeight 没变）才重新判定
+    //   · 滚到底（无论拖拽还是程序滚）一定恢复跟随
+    // 程序滚动期间不判定 —— scrollTo 是异步的（下一帧才生效），
+    // 此刻的 scrollTop 是中间态，用它判定会误判成「用户上翻」。
+    if (programmaticScrollRef.current) {
+      lastScrollHeightRef.current = scrollHeight;
+      return;
     }
+
+    const heightChanged = scrollHeight !== lastScrollHeightRef.current;
+    lastScrollHeightRef.current = scrollHeight;
+
+    if (heightChanged && !userScrolledUpRef.current) {
+      // 内容长高、用户没上翻 → 保持跟随（不动 isAtBottomRef，它本来就是 true）
+      setShowScrollButton(false);
+      return;
+    }
+
+    // 纯位置变化 = 用户在滚（或程序滚到底）
+    if (isBottom) {
+      userScrolledUpRef.current = false;
+      isAtBottomRef.current = true;
+    } else {
+      // 不在底部且是用户滚的 → 停跟随
+      userScrolledUpRef.current = true;
+      isAtBottomRef.current = false;
+    }
+    setShowScrollButton(!isBottom);
   };
 
   const scrollToBottom = (behavior: ScrollBehavior = 'auto') => {
     const el = scrollContainerRef.current;
     if (el) {
+      // 标记程序滚动，跑完两帧再清（scrollTo 生效需要一帧）
+      programmaticScrollRef.current = true;
       el.scrollTo({ top: el.scrollHeight, behavior });
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          programmaticScrollRef.current = false;
+        });
+      });
     }
   };
 
@@ -2629,7 +2673,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       if (userScrolledUpRef.current || !isAtBottomRef.current) return;
       const el = scrollContainerRef.current;
       if (el) {
+        programmaticScrollRef.current = true;
         el.scrollTop = el.scrollHeight;
+        requestAnimationFrame(() => { programmaticScrollRef.current = false; });
       }
       if (remaining > 0) {
         requestAnimationFrame(() => run(remaining - 1));
@@ -2647,7 +2693,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
         if (userScrolledUpRef.current || !isAtBottomRef.current) return;
         const el = scrollContainerRef.current;
         if (el) {
+          programmaticScrollRef.current = true;
           el.scrollTop = el.scrollHeight;
+          requestAnimationFrame(() => { programmaticScrollRef.current = false; });
         }
       }, delay);
     });
