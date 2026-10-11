@@ -2427,7 +2427,7 @@ async function buildAgent(runtime) {
   // 根本没有这个参数（Restart 工具 2026-08-25 就整个删了，CLI 也没有）。
   // 传一个不存在的参数会让人以为「Web 禁用了重启，CLI 有」，属于误导。
   includeTermuxTools: true, includeScreencap: false, includePhoneTools: true, contextFiles: webContext, memoryPath: WEB_MEMORY_PATH, memoryLabel: 'Web Memory', onPresent: payload => emit(runtime, 'present', payload), systemPromptBase: sessionPrompt, sessionStartPrompt: WEB_SESSION_START_PROMPT,
-  // 子 Agent / AgentWorkflow 共用根 Agent 的权限裁决。
+  // 子 Agent 共用根 Agent 的权限裁决。
   // 不传的话 engine-setup 默认 `async () => true`（全放行）—— 子 Agent 就成了
   // 绕过 /permissions 的后门（default 模式的装饰工具拦截、plan 模式的写操作限制全部失效）。
   onPermissionRequest: canRunWebTool,

@@ -99,7 +99,7 @@ import { makeHelpCommand } from './core/commands/cmd-help.mjs'
 import { normalizeProviderUrl, providerEndpointPreview } from './core/api/provider-url.mjs'
 import { TavilySearchTool } from './core/tools/tavily.mjs'
 import { termuxTools } from './core/phone/termux-tools.mjs'
-import { LspTool, lspManager } from './core/tools/lsp.mjs'
+import { lspManager } from './core/tools/lsp.mjs'
 import { renderMarkdown, setMarkdownTheme, getMarkdownTheme, markdownThemeNames } from './core/ui/markdown.mjs'
 import { strWidth, stripAnsi } from './core/ui/width.mjs'
 import { StreamMarkdownRenderer } from './core/ui/stream-md.mjs'
@@ -129,9 +129,8 @@ import { loadQqConfig as loadQqConfigShared, saveQqConfig as saveQqConfigShared,
 // QQPush 是唯一的出站工具，且只能发给主人号 —— 不给「发给任意人」的能力，
 // 否则 AI 可能被诱导用用户的号向他人发东西。
 import { QQPushTool, QQRecallTool } from './core/integrations/qq-tools.mjs'
-import { FindImageTool, ReverseImageTool } from './core/tools/tools-image-search.mjs'
+import { FindImageTool } from './core/tools/tools-image-search.mjs'
 import { SearchInfoTool, LookupTool } from './core/tools/tools-lookup.mjs'
-import { AgentWorkflowTool } from './core/agent/agent-workflow.mjs'
 import { CliTaskState, formatResultCard } from './core/agent/cli-task-state.mjs'
 import { buildTaskDiff, formatTaskDiff } from './core/agent/task-diff.mjs'
 import { context7Help, context7Status, setupContext7, setContext7Enabled } from './core/integrations/context7.mjs'
@@ -937,7 +936,6 @@ async function main() {
   // 重启统一由用户 Ctrl+X 触发。
   registry.register(new MemoryTool())
   registry.register(new TavilySearchTool())
-  registry.register(new LspTool())
   // Hashline 工具集（行锚点验证编辑）
   registry.register(new HashlineReadTool())
   registry.register(new HashlineEditTool(multiUndo))
@@ -963,9 +961,8 @@ async function main() {
   registry.register(new ImageGenTool())
   // Present：终端无渲染能力，execute 返回降级文案（内容已接收，不报错），与 Web 端同一工具
   registry.register(new PresentTool({ cwd: getWorkspacePath() || process.cwd() }))
-  // 以文找图 / 以图识图（Pexels 图库 + Yandex 识图）
+  // 以文找图（Pexels 图库）
   registry.register(new FindImageTool())
-  registry.register(new ReverseImageTool())
   // 多来源资料查询 → 资料卡 → 按条目抓全文
   registry.register(new SearchInfoTool())
   registry.register(new LookupTool())
@@ -1336,15 +1333,6 @@ async function main() {
       return (typeof r === 'string' || r instanceof String) ? String(r) : JSON.stringify(r)
     }
   }
-
-  // 多阶段 workflow 不包含 Agent/AgentWorkflow，防止子 Agent 无限递归套娃。
-  registry.register(new AgentWorkflowTool({
-    api,
-    systemPrompt: () => getCurrentSystemPrompt(),
-    tools: registry.list().filter(t => t.name !== 'Agent' && t.name !== 'AgentWorkflow'),
-    onPermissionRequest,
-    logger: moduleLogger,   // 别用 console：全屏下会飘到输入框旁（同上）
-  }))
 
   const sessionStartTime = Date.now()
 
@@ -3908,7 +3896,7 @@ async function main() {
         return await integrationCommands.plugin(args)
 
       case 'workflow':
-        return 'AgentWorkflow: Explore → Plan → Implement → Review\n每阶段独立上下文、工具白名单、maxTurns 和超时；由 Agent 工具调用，默认不后台运行。'
+        return '工作流编排：用 Agent 工具分阶段派活（Explore → Plan → Implement → Review）。'
 
       case 'context7':
         // 【2026-10-05 搬】实现移到 core/commands/cmd-system-config.mjs。
@@ -4345,8 +4333,6 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
   registry.register(new CommandExecTool(handleCommand))
   // 更新 agent 的工具列表（因为 agent 在前面已初始化，后注册的工具需要同步）
   agent.tools = registry.list()
-  const workflowTool = registry.get('AgentWorkflow')
-  if (workflowTool) workflowTool.tools = registry.list().filter(t => t.name !== 'Agent' && t.name !== 'AgentWorkflow')
 
   // 提示符对齐官方 PromptInputModeIndicator.tsx：
   //   const color = teammateColor ?? (isAnt ? 'subtle' : undefined)

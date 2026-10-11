@@ -1,8 +1,6 @@
-// Claude Code Mobile - LSP 工具
-// 提供诊断、hover、定义跳转、补全等 LSP 能力
-// 支持 TypeScript 和 Python（pyright）
+// Claude Code Mobile - LSP 客户端（供 Diagnostics 工具使用）
+// 提供诊断能力；支持 TypeScript 和 Python（pyright）
 
-import { Tool } from './tools.mjs'
 import { spawn, execFileSync } from 'node:child_process'
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { resolve, extname, dirname } from 'node:path'
@@ -426,113 +424,7 @@ class LspManager {
 // 全局单例
 const lspManager = new LspManager()
 
-// ─────────────────────────────────────────────────────────────
-// LSP Tool 暴露给助手
-// ─────────────────────────────────────────────────────────────
-export class LspTool extends Tool {
-  constructor() {
-    super({
-      name: 'LSP',
-      description: '调用 Language Server Protocol 获取代码诊断、类型信息、定义跳转、补全建议。支持 TypeScript/JavaScript 和 Python。',
-      input_schema: {
-        type: 'object',
-        properties: {
-          file_path: { type: 'string', description: '目标文件路径' },
-          action: {
-            type: 'string',
-            enum: ['diagnostic', 'hover', 'definition', 'completion'],
-            description: '要执行的 LSP 操作',
-          },
-          line: { type: 'number', description: '行号（从1开始，用于 hover/definition/completion）' },
-          character: { type: 'number', description: '列号（从1开始，用于 hover/definition/completion）' },
-        },
-        required: ['file_path', 'action'],
-      },
-      isReadOnly: () => true,
-      isConcurrencySafe: () => false,    // LSP 内部有缓存状态，避免并发
-      maxResultSizeChars: 20000,
-      validateInput: (input) => {
-        const errors = []
-        if (!input.file_path) errors.push('file_path is required')
-        if (!input.action) errors.push('action is required')
-        if (['hover', 'definition', 'completion'].includes(input.action) && (input.line == null || input.character == null)) {
-          errors.push(`${input.action} 需要 line 和 character 参数`)
-        }
-        return { valid: errors.length === 0, errors }
-      },
-    })
-  }
-
-  async execute(input, ctx = {}) {
-    const result = await lspManager.run(input.file_path, input.action, {
-      line: input.line || 1,
-      character: input.character || 1,
-    }, ctx.cwd || process.cwd())
-    return formatLspResult(result, input.action)
-  }
-}
-
-// 格式化输出
-function formatLspResult(result, action) {
-  if (!result) return '(空结果)'
-  if (result.error) {
-    return `LSP 失败: ${result.error}${result.supported ? '\n支持的扩展名: ' + result.supported.join(', ') : ''}`
-  }
-
-  if (action === 'diagnostic') {
-    if (!Array.isArray(result) || result.length === 0) return '(无诊断错误)'
-    return result.map(d => {
-      const sev = { 1: 'ERROR', 2: 'WARN', 3: 'INFO', 4: 'HINT' }[d.severity] || 'MSG'
-      const start = d.range ? d.range.start : { line: 0, character: 0 }
-      return `[${sev}] ${d.range ? start.line + 1 + ':' + (start.character + 1) : ''} ${d.message}${d.source ? ' (' + d.source + ')' : ''}`
-    }).join('\n')
-  }
-
-  if (action === 'hover') {
-    if (!result || (!result.contents && result.result === null)) return '(无 hover 信息)'
-    let content
-    if (typeof result.contents === 'string') content = result.contents
-    else if (result.contents && result.contents.value) content = result.contents.value
-    else content = JSON.stringify(result.contents)
-    return content
-  }
-
-  if (action === 'definition') {
-    if (!result) return '(未找到定义)'
-    const locs = Array.isArray(result) ? result : [result]
-    if (locs.length === 0) return '(未找到定义)'
-    return locs.map(l => {
-      const uri = l.uri || (l.targetUri)
-      const range = l.range || l.targetRange
-      const start = range ? range.start : { line: 0, character: 0 }
-      return (uri ? uri.replace('file://', '') : '?') + ':' + (start.line + 1) + ':' + (start.character + 1)
-    }).join('\n')
-  }
-
-  if (action === 'completion') {
-    if (!result) return '(无补全)'
-    const items = Array.isArray(result) ? result : (result.items || [])
-    if (items.length === 0) return '(无补全)'
-    return items.slice(0, 50).map(it => {
-      const label = it.label || it.textEdit?.newText || '?'
-      const kind = CompletionItemKindLabels[it.kind] || ''
-      const detail = it.detail ? ' — ' + it.detail : ''
-      return (kind ? `[${kind}] ` : '') + label + detail
-    }).join('\n') + (items.length > 50 ? `\n... 其余 ${items.length - 50} 项已省略` : '')
-  }
-
-  return JSON.stringify(result, null, 2)
-}
-
-const CompletionItemKindLabels = {
-  1: 'Text', 2: 'Method', 3: 'Function', 4: 'Constructor', 5: 'Field',
-  6: 'Variable', 7: 'Class', 8: 'Interface', 9: 'Module', 10: 'Property',
-  11: 'Unit', 12: 'Value', 13: 'Enum', 14: 'Keyword', 15: 'Snippet',
-  16: 'Color', 17: 'File', 18: 'Reference', 19: 'Folder', 20: 'EnumMember',
-  21: 'Constant', 22: 'Struct', 23: 'Event', 24: 'Operator', 25: 'TypeParameter',
-}
-
-// 解析 tsc --noEmit 输出
+// 解析 tsc 输出（格式：file(line,col): error TS1234: msg）
 function parseTscErrors(output) {
   const diagnostics = []
   const re = /^([^(]+)\((\d+),(\d+)\):\s+(error|warning)\s+TS(\d+):\s+(.+)$/gm

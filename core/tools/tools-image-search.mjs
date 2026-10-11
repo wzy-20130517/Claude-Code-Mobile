@@ -1,14 +1,6 @@
-// 以文找图 / 以图识图工具（Agent 可调）
+// 以文找图工具（Agent 可调）
 //
-// 【为什么有两个】用户要的两种搜图：
-//   FindImage    文本 → 图片：拿关键词找相关图片（Pexels 图库）
-//   ReverseImage 图片 → 是什么：给一张图，搜它的来源/内容
-//
-// 【数据源抉择】media-downloader skill 用 Pexels（key 在 PEXELS_API_KEY，
-// 已验证有效），这里沿用同一数据源 —— 但实现必须是 mjs，不能调外部 py。
-// 原因：py 是别的 skill 的附带脚本，调它等于跨项目依赖；它的输出目录、
-// 文件命名、错误处理都不受我们控制，行为一变这边就坏。Pexels API 本身
-// 就是两个 HTTP 请求（search + 下载），mjs 里直接写更干净。
+// 【数据源】Pexels（key 在 PEXELS_API_KEY，已验证有效），mjs 实现不调外部 py。
 //
 // 【为什么 Yandex 不走 skill】skill 里没有以图识图的部分，那是新写的。
 // Yandex 是唯一真正「无 key、纯 HTTP」的识图源（TinEye 要 JS 渲染，
@@ -16,7 +8,7 @@
 // Yandex 对动漫图源覆盖弱，以后拿到 SauceNAO key 可以再加一路。
 
 import { Tool } from './tools.mjs'
-import { mkdirSync, existsSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { homedir } from 'node:os'
 
@@ -115,35 +107,3 @@ export class FindImageTool extends Tool {
   }
 }
 
-/**
- * 以图识图：给一张本地图片，返回它可能是什么 + 相关链接。
- *
- * 实现：Yandex 图片搜索的结果页抓取。无 key、纯 HTTP。
- * 限制（先说明）：Yandex 对动漫/插画的图源覆盖弱于 SauceNAO；
- * 反爬较严，频繁调用会弹验证码。拿到 SauceNAO key 后应再加一路。
- */
-export class ReverseImageTool extends Tool {
-  constructor() {
-    super({
-      name: 'ReverseImage',
-      description: '以图识图：给一张本地图片，搜索它的来源、相关页面和相似图片。'
-        + '用户发一张不认识的图问「这是什么」时用。返回可能的标题、来源链接和相似图。',
-      input_schema: {
-        type: 'object',
-        properties: {
-          path: { type: 'string', description: '本地图片绝对路径' },
-        },
-        required: ['path'],
-      },
-      maxResultSizeChars: 3000,
-    })
-  }
-
-  async execute(input) {
-    const p = String(input?.path ?? '').trim()
-    if (!p) return '需要 path（本地图片绝对路径）'
-    if (!existsSync(p)) return `文件不存在: ${p}`
-    return 'ReverseImage 尚未接入识图源：Yandex 结果页抓取待验证，SauceNAO 需 API key。'
-      + '拿到 SauceNAO key（https://saucenao.com/user.php 注册后显示）后告诉我，我接上。'
-  }
-}

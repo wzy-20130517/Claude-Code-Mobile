@@ -48,7 +48,7 @@ const TOOL_TIMEOUTS = {
   QQSend: NETWORK, QQReply: NETWORK, QQMute: NETWORK,
 
   // 长任务
-  Bash: LONG, Test: LONG, Agent: LONG, AgentWorkflow: LONG, Task: LONG,
+  Bash: LONG, Test: LONG, Agent: LONG, Task: LONG,
 
   // 生成类（慢，实测远超 60s）
   ImageGen: SLOW_GEN, ViewVideo: SLOW_GEN,

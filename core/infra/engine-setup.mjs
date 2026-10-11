@@ -21,7 +21,6 @@ import { EnterWatchTool, ExitWatchTool } from '../agent/plan.mjs'
 import { DshPluginTool } from '../tools/tools-dsh-plugin.mjs'
 import { TavilySearchTool } from '../tools/tavily.mjs'
 import { termuxTools } from '../phone/termux-tools.mjs'
-import { LspTool } from '../tools/lsp.mjs'
 import { HashlineReadTool, HashlineEditTool, HashlineGrepTool } from '../tools/tools-hashline.mjs'
 import { ApplyPatchTool, TestTool, DiagnosticsTool, RepoMapTool, SymbolsTool, SafeRenameTool, SleepTool } from '../tools/tools-smart.mjs'
 import { ViewImageTool, ViewVideoTool, ScreencapTool } from '../tools/tools-vision.mjs'
@@ -40,14 +39,13 @@ import { PHONE_TOOLS } from '../tools/tools-phone.mjs'
 // 这四个原来只在 index.mjs（CLI）注册，engine-setup 连 import 都没有 ——
 // 于是 Web 端 AI 用不了找图/识图/搜资料/展开全文。而 Web 还实现了 /pexels
 // 命令去配 Pexels key，配了却没工具用（用户会以为坏了）。
-import { FindImageTool, ReverseImageTool } from '../tools/tools-image-search.mjs'
+import { FindImageTool } from '../tools/tools-image-search.mjs'
 import { SearchInfoTool, LookupTool } from '../tools/tools-lookup.mjs'
 // 子 Agent 管控（2026-09-19 补）：Web 早就能 spawn 子 Agent（Agent 工具在），
 // 但拿不到状态/中止/输出/记忆 —— 长任务一旦派出去就失去控制，只能干等或杀掉整个服务。
 import { AgentStatusTool, AgentStopTool, AgentOutputTool } from '../tools/tools-agent-status.mjs'
 import { AgentMemoryTool } from '../tools/tools-agent-memory.mjs'
 import { ClaudeMdLoader } from '../session/persistence.mjs'
-import { AgentWorkflowTool } from '../agent/agent-workflow.mjs'
 import { SYSTEM_PROMPT, SESSION_START_PROMPT, envPaths } from './prompts.mjs'
 import { CustomCommandLoader, ensureCommandsDir } from '../commands/custom-commands.mjs'
 import { CustomAgentLoader, ensureAgentsDir } from '../agent/custom-agents.mjs'
@@ -133,7 +131,6 @@ export function createEngineToolkit(opts = {}) {
   }
   registry.register(new MemoryTool(opts.memoryPath || null, opts.memoryLabel || 'CLAUDE.md'))
   registry.register(new TavilySearchTool())
-  registry.register(new LspTool())
   registry.register(new HashlineReadTool())
   registry.register(new HashlineEditTool(multiUndo))
   registry.register(new HashlineGrepTool())
@@ -161,8 +158,7 @@ export function createEngineToolkit(opts = {}) {
   // 团队协作 + 定时任务 + GitHub
   for (const t of TEAM_TOOLS) registry.register(t)
   for (const T of GITHUB_TOOLS) registry.register(new T())
-  // 图库检索与资料搜索：FindImage(以文找图) / ReverseImage(以图识图) /
-  // SearchInfo(多源资料搜索) / Lookup(展开全文)。与 CLI index.mjs:915-919 对齐。
+  // 图库检索与资料搜索：FindImage(以文找图) / SearchInfo(多源资料搜索) / Lookup(展开全文)。
   // 子 Agent 管控：查状态 / 中止 / 取输出 / 读写长期记忆。
   // getAgentType 返回 'main' —— Web 侧的调用者就是主 Agent（与 index.mjs:1193 一致）。
   registry.register(new AgentStatusTool())
@@ -170,7 +166,6 @@ export function createEngineToolkit(opts = {}) {
   registry.register(new AgentOutputTool())
   registry.register(new AgentMemoryTool({ getAgentType: () => 'main' }))
   registry.register(new FindImageTool())
-  registry.register(new ReverseImageTool())
   registry.register(new SearchInfoTool())
   registry.register(new LookupTool())
   registry.register(new CronCreateTool())
@@ -253,15 +248,6 @@ export function createEngineToolkit(opts = {}) {
         return typeof r === 'string' ? r : JSON.stringify(r)
       }
     }
-
-    registry.register(new AgentWorkflowTool({
-      api: opts.api || null,
-      systemPrompt: () => getSystemPrompt(),
-      tools: registry.list().filter(t => t.name !== 'Agent' && t.name !== 'AgentWorkflow'),
-      onPermissionRequest: opts.onPermissionRequest || (async () => true),
-      cwd,
-      sessionId: opts.sessionId || null,
-    }))
   }
 
   function getRuntimeModelInfo() {
@@ -367,12 +353,6 @@ export function createEngineToolkit(opts = {}) {
         configurable: true,
         get: () => getSystemPrompt(),
       })
-    }
-    const workflowTool = registry.get('AgentWorkflow')
-    if (workflowTool) {
-      workflowTool.api = api
-      workflowTool.systemPrompt = () => getSystemPrompt()
-      workflowTool.tools = registry.list().filter(t => t.name !== 'Agent' && t.name !== 'AgentWorkflow')
     }
   }
 

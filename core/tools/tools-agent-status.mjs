@@ -50,7 +50,7 @@ export class AgentStatusTool extends Tool {
   constructor() {
     super({
       name: 'AgentStatus',
-      description: '查看由 Agent 或 AgentWorkflow 启动的后台子 Agent 状态、耗时、turn、最近输出和最终结果。不要用 BashOutput 轮询子 Agent；子 Agent 完成与否以这里的状态为准。',
+      description: '查看由 Agent 工具启动的后台子 Agent 状态、耗时、turn、最近输出和最终结果。不要用 BashOutput 轮询子 Agent；子 Agent 完成与否以这里的状态为准。',
       input_schema: {
         type: 'object',
         properties: {

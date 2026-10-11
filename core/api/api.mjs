@@ -58,7 +58,7 @@ const MICRO_REGENERABLE_TOOLS = new Set([
   'Grep', 'HashlineGrep', 'Glob', 'CodeSearch',
   'RepoMap', 'Symbols',
   'GitStatus', 'GitDiff', 'GitLog',
-  'LSP', 'Diagnostics',
+  'Diagnostics',
   'Bash', 'BashOutput', 'Test',
   'WebFetch', 'WebSearch',
 ])
@@ -68,7 +68,7 @@ const MICRO_REGENERABLE_TOOLS = new Set([
 const MICRO_PROTECTED_TOOLS = new Set([
   'TaskGet', 'TaskList', 'TaskCreate', 'TaskClaim', 'TaskUpdate', 'TaskDelete',
   'CheckMessages', 'SendMessage', 'TeamStatus', 'TeamJoin', 'TeamCreate',
-  'AgentOutput', 'AgentStatus', 'Agent', 'AgentWorkflow', 'AgentMemory',
+  'AgentOutput', 'AgentStatus', 'Agent', 'AgentMemory',
   'AskUserQuestion', 'TodoWrite', 'Memory', 'UserInputHistory',
   'ImageGen', 'ViewImage', 'ViewVideo', 'Screencap',
   'Skill', 'CommandExec',
