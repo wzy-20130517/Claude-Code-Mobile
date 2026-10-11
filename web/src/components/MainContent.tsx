@@ -5160,7 +5160,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
         {/* 【2026-10-10 加】「回到底部」按钮 —— 对齐 APK 的同款功能。
             用户上翻阅读历史时出现，点击回到最新消息并恢复自动跟随。
             位置：输入框上方居中（与 APK 的 BottomCenter 对齐）。
-            样式：accent 实底 + 反色文字（对比度拉满，对齐 APK 2026-10-07 的改进）。 */}
+            样式：accent 半透明（0.85）+ 反色文字 —— 原来实底太抢眼，
+            浮在消息上方时挡内容（用户报「有点挡了」）。
+            hover 时变回实底（提示可点）。 */}
         {showScrollButton && (
           <div
             className="absolute left-0 right-0 z-30 pointer-events-none flex justify-center"
@@ -5168,7 +5170,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
           >
             <button
               onClick={handleScrollToBottomClick}
-              className="pointer-events-auto flex items-center justify-center w-9 h-9 rounded-full bg-[#D97757] text-white shadow-[0_2px_10px_rgba(0,0,0,0.25)] hover:bg-[#c96a4d] active:scale-95 transition-all"
+              className="pointer-events-auto flex items-center justify-center w-9 h-9 rounded-full bg-[#D97757]/85 text-white shadow-[0_2px_10px_rgba(0,0,0,0.25)] hover:bg-[#D97757] active:scale-95 transition-all"
               title="回到底部"
               aria-label="回到底部"
             >
