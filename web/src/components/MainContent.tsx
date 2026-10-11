@@ -2604,25 +2604,37 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       return;
     }
 
+    // 【2026-10-11 二次修】上一版把「内容长高」直接 return —— **错了**：
+    // 用户滑到底的过程中，流式内容必然同时在长高 → heightChanged=true
+    // → 直接 return → **用户的滚动意图被忽略** → isAtBottomRef 保持 false
+    // → 不跟随。这就是「滑到最低也不跟随」。
+    //
+    // 正确做法（对齐官方 Jetchat 的判定）：**位置就是唯一真相** ——
+    //   · 滚到底（distance < 50）→ 一定恢复跟随（无论什么原因滚的）
+    //   · 没到底 → 看是不是内容长高造成的：是则不动判定（保持原状态），
+    //     否则（用户真的上翻了）→ 停跟随
     const heightChanged = scrollHeight !== lastScrollHeightRef.current;
     lastScrollHeightRef.current = scrollHeight;
 
-    if (heightChanged && !userScrolledUpRef.current) {
-      // 内容长高、用户没上翻 → 保持跟随（不动 isAtBottomRef，它本来就是 true）
+    if (isBottom) {
+      // 到底了 → 恢复跟随（最高优先级，不受 heightChanged 影响）
+      userScrolledUpRef.current = false;
+      isAtBottomRef.current = true;
       setShowScrollButton(false);
       return;
     }
 
-    // 纯位置变化 = 用户在滚（或程序滚到底）
-    if (isBottom) {
-      userScrolledUpRef.current = false;
-      isAtBottomRef.current = true;
-    } else {
-      // 不在底部且是用户滚的 → 停跟随
-      userScrolledUpRef.current = true;
-      isAtBottomRef.current = false;
+    if (heightChanged && !userScrolledUpRef.current) {
+      // 没到底 + 内容长高 + 用户没上翻 → 是流式吐字把内容撑高了，
+      // 保持跟随（程序滚动会追上），不改判定
+      setShowScrollButton(false);
+      return;
     }
-    setShowScrollButton(!isBottom);
+
+    // 没到底 + 用户真的滚了（或内容没变但位置变了）→ 停跟随
+    userScrolledUpRef.current = true;
+    isAtBottomRef.current = false;
+    setShowScrollButton(true);
   };
 
   const scrollToBottom = (behavior: ScrollBehavior = 'auto') => {
