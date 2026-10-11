@@ -189,9 +189,22 @@ const KNOWN_GLOBALS = new Set([
 
 function loadTypeScript(errors) {
   try {
-    // Web build 已安装 TypeScript；只用其 AST parser，绝不执行受检源码。
-    // 路径注意：本文件在 core/infra/，要回退两级到项目根（重组前在 core/ 只需一级）。
-    return require('../../web/node_modules/typescript')
+    // 【路径为什么有多档回退】
+    // 原来硬编码 `../../web/node_modules/typescript` —— 本机能用是因为 web/ 装了它，
+    // 但 CI 里只 `npm install` 根目录（web/ 的 node_modules 不存在）→ 报
+    // 「无法加载 AST 静态检查器」→ 预检直接失败（2026-10-11 CI #1 实测）。
+    //
+    // 现在按优先级找：根目录（package.json 里 typescript 是 devDependency，
+    // CI 装了）→ web/node_modules（本机的实际情况）→ 全局解析。
+    const candidates = [
+      '../../node_modules/typescript',
+      '../../web/node_modules/typescript',
+      'typescript',
+    ]
+    for (const c of candidates) {
+      try { return require(c) } catch {}
+    }
+    throw new Error(`都试过了：${candidates.join(', ')}`)
   } catch (error) {
     errors.push({
       file: 'core/infra/restart-preflight.mjs',

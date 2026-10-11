@@ -19,6 +19,7 @@
     "vue": "^3.5.18"
   },
   "devDependencies": {
-    "happy-dom": "^20.11.1"
+    "happy-dom": "^20.11.1",
+    "typescript": "5.9.3"
   }
 }

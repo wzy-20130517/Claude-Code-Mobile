@@ -31,10 +31,15 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies
-        # 只装预检需要的：typescript（未声明变量检查用）+ unbash（Bash AST）
-        # 不用 npm ci —— 完整依赖含 playwright 等重包，CI 里用不上
+        # 只装预检需要的两个包，不跑完整 npm ci —— 完整依赖含 playwright 等重包，
+        # CI 里用不上（会拖慢几分钟）。
+        #
+        # ⚠️ typescript 必须锁 5.x：7.0+ 是原生 Go 版，npm 包里只有 CLI 二进制，
+        # **没有 JS API**（lib/ 只有 4 个文件，`ts.isIdentifier` 之类不存在）。
+        # restart-preflight 依赖完整的 AST API，装 7.x 会报「无法加载 AST 静态检查器」
+        # （2026-10-11 CI #1 实测）。版本与 devDependencies 里的一致。
         run: |
-          npm install --no-save typescript unbash
+          npm install --no-save typescript@5.9.3 unbash
 
       - name: Run preflight
         run: node tools/ci-preflight.mjs
