@@ -525,7 +525,10 @@ function normalizeMessageDocuments(message: any): DocumentInfo[] {
   }
 
   // Extract documents from Write tool calls, then apply subsequent Edit operations
-  const previewExts = ['md', 'txt', 'html', 'json', 'xml', 'yaml', 'yml', 'csv'];
+  // 【2026-10-11 加 svg】Desktop 的 previewExts 没有 svg，但提示词教模型写 .svg
+  // 展示矢量图 —— 结果文件写了、卡片不出现（用户报「并没看见 svg 显示」）。
+  // DocumentPanel 支持 svg 渲染（走沙箱 iframe），只是入口被这行过滤掉。
+  const previewExts = ['md', 'txt', 'html', 'json', 'xml', 'yaml', 'yml', 'csv', 'svg'];
   if (Array.isArray(message?.toolCalls)) {
     // First pass: collect initial Write content per file path
     const fileContents = new Map<string, string>();
