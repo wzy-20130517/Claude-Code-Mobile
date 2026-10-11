@@ -1,0 +1,43 @@
+name: Preflight
+
+# 【为什么只做预检，不做完整测试套】
+# 项目在 2026-09-18 删掉了整套回归测试（用户：「每次花最多的时间反而查不出东西，
+# 一直在修复 test 文件」）。现在的质量门是 **restart-preflight**：
+#   · 语法检查（node --check 等价）
+#   · 运行期未声明变量（防「语法绿、运行红」的 ReferenceError）
+#   · ESM import/export 链接（防 named export 不存在）
+# 这三项在手机上跑要 43 秒，CI 上更快，且**零维护**（不需要随代码改动更新断言）。
+#
+# 【为什么不加更重的检查】
+# ZCode 那种 3183 个测试文件的规模，是多人协作 + CI 矩阵撑着的。单人快速迭代的
+# 项目里，静态断言测试改一行代码就崩，维护成本远超收益（这是本项目的实战结论）。
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        # 只装预检需要的：typescript（未声明变量检查用）+ unbash（Bash AST）
+        # 不用 npm ci —— 完整依赖含 playwright 等重包，CI 里用不上
+        run: |
+          npm install --no-save typescript unbash
+
+      - name: Run preflight
+        run: node tools/ci-preflight.mjs
+
+      - name: Check web server syntax
+        run: node --check web/server.mjs

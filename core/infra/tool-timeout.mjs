@@ -66,6 +66,11 @@ const TOOL_TIMEOUTS = {
   // 主动等待：见上方 WAIT 注释，必须覆盖 Sleep 自己声明的 300s 上限
   Sleep: WAIT,
 
+  // 【修】AgentOutput 描述声明「wait 最大 600s」，但它原来不在表里 → 走默认 60s，
+  // 传 wait:300 时外层 60s 就把它掐了（实测 37 次失败里有 Tool timeout (1min)）。
+  // 用 INTERACTIVE 档（120s）也不够，必须 ≥ 600s + 余量。
+  AgentOutput: 610_000,
+
   // 模式切换 / 纯内存操作：瞬时完成
   EnterPlanMode: FAST, ExitPlanMode: FAST,
   EnterDeepMode: FAST, ExitDeepMode: FAST,
@@ -103,7 +108,10 @@ const TIMEOUT_IN_SECONDS = new Set(['AgentOutput'])
 
 export function resolveToolTimeout(toolName, input = {}) {
   const base = TOOL_TIMEOUTS[toolName] ?? DEFAULT_TIMEOUT
-  const raw = input?.timeout ?? input?.timeout_ms
+  // 【修】原来只读 timeout / timeout_ms —— AgentOutput 的工具描述推荐用 wait
+  // （timeout 是兼容旧名），只读 timeout 会让传 wait 时外层超时落到默认 60s，
+  // 把等待截断。三个名字都认，wait 优先。
+  const raw = input?.wait ?? input?.timeout ?? input?.timeout_ms
   if (raw === undefined || raw === null) return base
   let n = Number(raw)
   if (!Number.isFinite(n)) return base

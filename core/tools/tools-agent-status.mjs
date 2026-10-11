@@ -157,7 +157,10 @@ export class AgentOutputTool extends Tool {
     }
 
     if (input.block && !['completed', 'failed', 'killed'].includes(task.status)) {
-      const limitMs = Math.min(Math.max(Number(input.timeout) || 120, 1), 600) * 1000
+      // 【修】原来只读 input.timeout，而工具描述推荐的是 wait（timeout 是兼容旧名）——
+      // 传 wait:300 会被静默忽略、按默认 120s 走。两者都要认，wait 优先。
+      const rawWait = input.wait ?? input.timeout
+      const limitMs = Math.min(Math.max(Number(rawWait) || 120, 1), 600) * 1000
       const started = Date.now()
       const before = task.output_preview || ''
       // 200ms 轮询：够灵敏又不至于空转烧 CPU。手机上别调太密。

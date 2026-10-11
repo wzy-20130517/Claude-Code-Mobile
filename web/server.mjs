@@ -16,6 +16,7 @@ import { spawn } from 'node:child_process'
 import { Agent } from '../core/agent/agent.mjs'
 import { ApiClient } from '../core/api/api.mjs'
 import { createEngineToolkit } from '../core/infra/engine-setup.mjs'
+import { PermissionManager, DECORATIVE_TOOLS } from '../core/infra/permissions.mjs'
 import { setPhoneModePrompter, setPhoneFinishAction } from '../core/tools/tools-phone.mjs'
 // 【2026-10-10】device.json 读写（设置页「手机操作」区块用）——
 // 顶层静态 import：/api/config 处理器不在 getWebCtxDeps 的作用域里，
@@ -2337,7 +2338,36 @@ async function buildAgent(runtime) {
   if (!provider) throw new Error(`Provider不存在: ${runtime.providerId}`)
   const api = new ApiClient({ baseUrl: provider.url, apiKey: provider.apiKey, apiKeys: provider.apiKeys, model: activeModel || provider.model, protocol: provider.protocol || 'openai', temperature: Number(provider.temperature) || 1, maxOutputTokens: provider.maxOutputTokens || null, thinkingConfig: thinkingConfigForRuntime(runtime, config), systemTopLevel: !!provider.systemTopLevel })
   const isolatedTools = new Set(['Restart', 'Screencap'])
-  const canRunWebTool = async (tool) => !isolatedTools.has(tool?.name || tool)
+  // 【Web 权限接入】
+  //
+  // 原来只有 isolatedTools 一道硬编码黑名单，其余全放行 —— 权限模式（/permissions）
+  // 在 Web 完全不起作用，用户切到 default/plan 也不会拦任何东西。
+  //
+  // 现在复用 CLI 的 PermissionManager（与 CLI 同一份 permissions.json）：
+  //   1. 先查隔离表（Web 特有的两个工具）
+  //   2. 再走 permManager.resolve —— 装饰工具硬拒绝、模式规则、allow/deny/ask 全生效
+  //
+  // ⚠️ 与 CLI 的差异：CLI 对 Bash 是「一律放行到工具层（除非 deny 列表点名）」，
+  // 因为 CLI 用户就在终端前、能随时 Ctrl+C。Web 端**同样保留这个语义**——
+  // Web 的 Bash 也是长任务主力（构建、测试），拦了会废掉一半用途。
+  // 但 plan 模式下 Bash 的写操作会被 resolve 拦住（那是模式语义，不是工具特判）。
+  const webPermManager = new PermissionManager()
+  const canRunWebTool = async (tool, input) => {
+    const name = tool?.name || String(tool || '')
+    if (isolatedTools.has(name)) return false
+    // Bash：与 CLI 同语义——只看 deny 列表，其余放行（plan 模式除外，交给 resolve）
+    if (name === 'Bash') {
+      const mode = webPermManager.getMode()
+      if (mode === 'plan') {
+        const r = webPermManager.resolve('Bash', input || {})
+        return r.allowed
+      }
+      const rules = webPermManager.loadRules()
+      return !rules.deny.includes('Bash')
+    }
+    const r = webPermManager.resolve(name, input || {})
+    return r.allowed
+  }
   // 【2026-10-06 加 options】前端弹窗支持选项按钮 + 自由输入框
   // （options 原来硬编码空数组 —— 前端拿不到选项，只能打字）。
   const askUser = (question, options = []) => new Promise(resolve => {
@@ -2397,6 +2427,10 @@ async function buildAgent(runtime) {
   // 根本没有这个参数（Restart 工具 2026-08-25 就整个删了，CLI 也没有）。
   // 传一个不存在的参数会让人以为「Web 禁用了重启，CLI 有」，属于误导。
   includeTermuxTools: true, includeScreencap: false, includePhoneTools: true, contextFiles: webContext, memoryPath: WEB_MEMORY_PATH, memoryLabel: 'Web Memory', onPresent: payload => emit(runtime, 'present', payload), systemPromptBase: sessionPrompt, sessionStartPrompt: WEB_SESSION_START_PROMPT,
+  // 子 Agent / AgentWorkflow 共用根 Agent 的权限裁决。
+  // 不传的话 engine-setup 默认 `async () => true`（全放行）—— 子 Agent 就成了
+  // 绕过 /permissions 的后门（default 模式的装饰工具拦截、plan 模式的写操作限制全部失效）。
+  onPermissionRequest: canRunWebTool,
   // 【Web 补齐四个 CLI 工具】
   //   CommandExec  —— 包装 executeSlashCommand，模型能跑程序内命令（/cost、/context 等）。
   //                   不带 / 前缀的原始串传进去（工具描述已说明），内部自己加。
