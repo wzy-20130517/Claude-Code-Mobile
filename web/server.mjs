@@ -2687,7 +2687,7 @@ const server = http.createServer(async (req, res) => {
           // 【2026-10-10 加】phoneMode —— 设置页「手机操作」区块用，
           // 存 device.json（与 CLI 的 /device mode 同一文件同一字段）。
           const devCfg = (() => { try { return loadDeviceConfig() || {} } catch { return {} } })()
-          return json(res, 200, { current: config.current, defaultProviderId: config.current, source: 'web-config.json', stream: config.stream !== false, permissionMode: config.permissionMode || 'bypassPermissions', thinking: config.thinking || {}, providers: publicProviders(config), chatModels: Array.isArray(config.chatModels) ? config.chatModels : [], defaultModelId: config.defaultModelId || null, compactThresholdTokens: config.compactThresholdTokens ?? 0, compactThresholdMessages: config.compactThresholdMessages ?? 0, phoneMode: devCfg.phoneMode || null })
+          return json(res, 200, { current: config.current, defaultProviderId: config.current, source: 'web-config.json', stream: config.stream !== false, permissionMode: config.permissionMode || 'bypassPermissions', thinking: config.thinking || {}, providers: publicProviders(config), chatModels: Array.isArray(config.chatModels) ? config.chatModels : [], defaultModelId: config.defaultModelId || null, compactThresholdTokens: config.compactThresholdTokens ?? 0, compactThresholdMessages: config.compactThresholdMessages ?? 0, compactKeepLast: config.compactKeepLast ?? 10, phoneMode: devCfg.phoneMode || null })
         }
         // 【默认 Provider 要落盘】原来前端只能把它存 localStorage ——
         // 那是浏览器本地的，换设备/清缓存就没了，用户感受就是「选了不保存，
@@ -2728,6 +2728,11 @@ const server = http.createServer(async (req, res) => {
             if (!Number.isFinite(v) || v < 0) return json(res, 400, { error: 'compactThresholdMessages 必须是非负数' })
             cliPatch.compactThresholdMessages = Math.floor(v)
           }
+          if (body.compactKeepLast !== undefined) {
+            const v = Number(body.compactKeepLast)
+            if (!Number.isFinite(v) || v < 1) return json(res, 400, { error: 'compactKeepLast 必须是正整数（自动压缩后保留的消息条数）' })
+            cliPatch.compactKeepLast = Math.floor(v)
+          }
           if (Object.keys(cliPatch).length) {
             try {
               const cli = JSON.parse(readFileSync(CLI_CONFIG_PATH, 'utf8'))
@@ -2759,7 +2764,7 @@ const server = http.createServer(async (req, res) => {
           // 返回最新值（读共享配置，确保回显的是落盘后的真值）
           const fresh = loadWebConfig()
           const freshDev = (() => { try { return loadDeviceConfig() || {} } catch { return {} } })()
-          return json(res, 200, { ok: true, current: fresh.current, chatModels: fresh.chatModels || [], defaultModelId: fresh.defaultModelId || null, compactThresholdTokens: fresh.compactThresholdTokens ?? 0, compactThresholdMessages: fresh.compactThresholdMessages ?? 0, phoneMode: freshDev.phoneMode || null })
+          return json(res, 200, { ok: true, current: fresh.current, chatModels: fresh.chatModels || [], defaultModelId: fresh.defaultModelId || null, compactThresholdTokens: fresh.compactThresholdTokens ?? 0, compactThresholdMessages: fresh.compactThresholdMessages ?? 0, compactKeepLast: fresh.compactKeepLast ?? 10, phoneMode: freshDev.phoneMode || null })
         }
       }
       // 【2026-10-08 合并】原 /api/output-styles 端点（GET 列表 / PATCH 切换）

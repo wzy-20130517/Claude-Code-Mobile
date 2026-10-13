@@ -418,9 +418,22 @@ function saveConfig(config) {
   // config。若这里只用 config.imageGen，用户先 /imagegen key，再 /model，旧内存中的
   // undefined 会把刚写好的 imageGen 整块删掉。因此保存前重新从磁盘读取该字段。
   let diskImageGen = config.imageGen
+  // 【2026-10-13 修】压缩阈值同样由 core/session/auto-compact.mjs 独立直接写磁盘
+  // （/compact-threshold 命令、Web 设置页 PATCH 都走那条路），不一定同步回主进程
+  // 内存里的 config。若这里只用内存值，用户刚设的 270000 会被下一次 saveConfig
+  // （如切 Provider）用内存里的旧值 0 覆盖 —— 实测踩到（设完阈值，切一次配置就丢）。
+  // 与 imageGen 同款处理：保存前重新从磁盘读这几个字段。
+  let diskCompact = {
+    compactThresholdTokens: config.compactThresholdTokens,
+    compactThresholdMessages: config.compactThresholdMessages,
+    compactKeepLast: config.compactKeepLast,
+  }
   try {
     const disk = JSON.parse(readFileSync(PROJECT_CONFIG_PATH, 'utf-8'))
     if (disk.imageGen !== undefined) diskImageGen = disk.imageGen
+    if (disk.compactThresholdTokens !== undefined) diskCompact.compactThresholdTokens = disk.compactThresholdTokens
+    if (disk.compactThresholdMessages !== undefined) diskCompact.compactThresholdMessages = disk.compactThresholdMessages
+    if (disk.compactKeepLast !== undefined) diskCompact.compactKeepLast = disk.compactKeepLast
   } catch {}
 
   atomicWrite(PROJECT_CONFIG_PATH, JSON.stringify({
@@ -432,8 +445,12 @@ function saveConfig(config) {
     temperature: config.temperature,
     maxContextTokens: config.maxContextTokens,
     compaction: config.compaction,
-    compactThresholdTokens: config.compactThresholdTokens,
-    compactThresholdMessages: config.compactThresholdMessages,
+    // 【2026-10-13】这三个字段以磁盘值为准（见上方 diskCompact 注释）——
+    // auto-compact.mjs 独立写盘，内存 config 可能是旧的。
+    // compactKeepLast 也在此登记：它是自动压缩后保留条数（白名单序列化的老坑）。
+    compactThresholdTokens: diskCompact.compactThresholdTokens,
+    compactThresholdMessages: diskCompact.compactThresholdMessages,
+    compactKeepLast: diskCompact.compactKeepLast,
     permissionMode: config.permissionMode,
     // 新字段必须登记在这里，否则 /statusline 设置了也存不住（白名单序列化）
     statusLine: config.statusLine,

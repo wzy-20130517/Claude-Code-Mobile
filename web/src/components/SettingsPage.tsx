@@ -113,28 +113,32 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   // compactThresholdTokens / compactThresholdMessages（0 = 关闭）。
   const [acTokenDraft, setAcTokenDraft] = useState('0');
   const [acMsgDraft, setAcMsgDraft] = useState('0');
+  const [acKeepDraft, setAcKeepDraft] = useState('10');
   const [acMsg, setAcMsg] = useState('');
   useEffect(() => {
     fetch('/api/config').then(r => r.json())
       .then(d => {
         setAcTokenDraft(String(d.compactThresholdTokens ?? 0));
         setAcMsgDraft(String(d.compactThresholdMessages ?? 0));
+        setAcKeepDraft(String(d.compactKeepLast ?? 10));
       })
       .catch(() => {});
   }, []);
   async function saveAutoCompact() {
     const t = Number(acTokenDraft || '0') || 0;
     const m = Number(acMsgDraft || '0') || 0;
+    const k = Number(acKeepDraft || '10') || 10;
     try {
       const r = await fetch('/api/config', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ compactThresholdTokens: t, compactThresholdMessages: m }),
+        body: JSON.stringify({ compactThresholdTokens: t, compactThresholdMessages: m, compactKeepLast: k }),
       });
       const d = await r.json();
       if (!r.ok) { setAcMsg(d.error || '保存失败'); return; }
       setAcTokenDraft(String(d.compactThresholdTokens ?? t));
       setAcMsgDraft(String(d.compactThresholdMessages ?? m));
+      setAcKeepDraft(String(d.compactKeepLast ?? k));
       setAcMsg('已保存');
       setTimeout(() => setAcMsg(''), 2000);
     } catch (e: any) {
@@ -800,8 +804,9 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
           <div className="space-y-5">
             <p className="text-[12px] text-claude-textSecondary/70">
               自动摘要可能丢细节，默认关闭；设了阈值才启用（与 CLI 的 /compact-threshold 同名同语义）。
+              第三栏「压缩后保留条数」对应 CLI 的 /compact-threshold &lt;tokens&gt; &lt;messages&gt; &lt;keepLast&gt; 第三参数。
             </p>
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-3 gap-6">
               <div>
                 <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">Token 阈值（0 = 关闭）</label>
                 <input
@@ -823,6 +828,18 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                   onChange={e => setAcMsgDraft(e.target.value.replace(/[^\d]/g, ''))}
                   onBlur={() => saveAutoCompact()}
                   placeholder="如 500（超过 500 条消息时压）"
+                  className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 transition-all placeholder-claude-textSecondary"
+                />
+              </div>
+              <div>
+                <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">压缩后保留条数</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={acKeepDraft}
+                  onChange={e => setAcKeepDraft(e.target.value.replace(/[^\d]/g, ''))}
+                  onBlur={() => saveAutoCompact()}
+                  placeholder="默认 10，如 100"
                   className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 transition-all placeholder-claude-textSecondary"
                 />
               </div>

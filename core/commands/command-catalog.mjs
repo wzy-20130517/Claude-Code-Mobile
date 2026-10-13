@@ -97,7 +97,7 @@ export const COMMAND_DESCRIPTIONS = {
   url: '改 API 地址（如 …/v1）',
   key: '看/改密钥：无参看现状含冷却',
   compact: '压缩上下文（直接敲=自动选）',
-  'compact-threshold': '自动压缩阈值（默认关）',
+  'compact-threshold': '自动压缩阈值（默认关，第三参数=压缩后保留条数）',
   'compact-trash': '找回压缩前的完整上下文',
   save: '手动存会话',
   load: '列出所有会话',
@@ -174,7 +174,7 @@ export const COMMAND_DESCRIPTIONS = {
 export const ARG_HINTS = {
   'add-dir': '<路径>', workspace: '[路径]', resume: '[ID|名称]', delete: '<ID|all>',
   rename: '<名称>', branch: '<名称>', save: '[名称]', compact: '[N|micro|force|status]',
-  'compact-threshold': '[数字|0 0]', model: '[配置ID] <模型名>', url: '[配置ID] <地址>',
+  'compact-threshold': '[数字|0 0|0 0 N]', model: '[配置ID] <模型名>', url: '[配置ID] <地址>',
   key: '[ID] <sk-...|pool|clear>', name: '[配置ID] <显示名>',
   config: '[ID|list|provider|…]', effort: '[强度|off|show|hide|replay]', style: '[风格名|off]',
   me: '[set <字段> <值>|clear <字段>]',

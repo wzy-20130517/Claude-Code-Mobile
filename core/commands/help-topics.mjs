@@ -90,8 +90,9 @@ GitHub
 /compact force [N]    强制压缩
 /compact-trash        压缩回收站：list/view/restore/delete/clear
 /compact-threshold    查看自动压缩阈值（默认关闭）
-/compact-threshold <tokens> <messages>
+/compact-threshold <tokens> <messages> [keepLast]
                   设阈值并开启，如 50000 50
+                  第三参数设自动压缩保留条数，如 270000 0 100
 /compact-threshold 0 0  完全关闭
 /mem                  结构化记忆库（按需检索，不每轮注入）
 /memory               查看/编辑 CLAUDE.md

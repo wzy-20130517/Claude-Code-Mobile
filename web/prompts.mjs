@@ -214,6 +214,7 @@ Bash 的合理场景：跑脚本 / 构建命令 / 包管理、诊断环境、git
 # 上下文管理
 - /context 查看当前上下文使用量（基于真实 prompt_tokens）
 - /compact（不带参数，推荐）自动选策略：先跑 micro 无损回收工具输出，压力降到 70% 以下就收手，仍吃紧才继续摘要
+- /compact-threshold 查看或设置自动压缩阈值（默认关闭，0 0 完全关闭）；第三参数 keepLast 设自动压缩保留条数，如 /compact-threshold 270000 0 100
 - 上下文接近上限时提示用户用 /compact；上游明确报 context window 错误就如实说，不要假装已恢复
 - 不要主动压缩上下文，除非用户明确要求
 

@@ -23,7 +23,7 @@
 
 import {
   getTokenLimit, setTokenLimit, getMessageLimit, setMessageLimit,
-  isAutoCompactEnabled, getCachePolicy,
+  getKeepLast, setKeepLast, isAutoCompactEnabled, getCachePolicy,
 } from '../session/auto-compact.mjs'
 import { loadUserProfile, setProfileField, PROFILE_FIELDS } from '../session/user-profile.mjs'
 // Context7 与重启预检都是纯函数，直接 import —— 不必经 ctx 转一手。
@@ -102,23 +102,36 @@ export function makeSystemConfigCommands(ctx) {
         return `当前自动压缩:\n`
           + `  固定 Token 阈值: ${tokenStr}\n`
           + `  固定消息阈值: ${msgStr}\n`
+          + `  自动压缩保留: ${getKeepLast()} 条消息\n`
           + `  自动压缩总开关: ${isAutoCompactEnabled() ? '开启' : '关闭'}\n\n`
           + `说明:\n`
           + `  · 默认关闭自动摘要，对话中不会主动压缩\n`
           + `  · /compact status           仅查看建议，不执行\n`
           + `  · /compact / /compact force 手动压缩\n`
           + `  · /compact-threshold 0 0    完全关闭自动压缩\n`
-          + `  · /compact-threshold <t> <m> 设固定阈值并按阈值自动压缩\n`
+          + `  · /compact-threshold <t> <m> [keep] 设阈值和自动压缩保留数\n`
+          + `  · 例如 /compact-threshold 270000 0 100\n`
           + `  · 上下文真正超长时由 agent 紧急截断保护（非摘要）`
       }
       const newTokens = parseInt(args[0])
       const newMessages = parseInt(args[1])
+      const newKeepLast = args[2] === undefined ? null : parseInt(args[2])
       let msg = ''
       if (!isNaN(newTokens) && setTokenLimit(newTokens)) msg += `Token 上限已设为: ${newTokens === 0 ? '关闭' : newTokens}\n`
       if (!isNaN(newMessages) && setMessageLimit(newMessages)) msg += `消息条数上限已设为: ${newMessages === 0 ? '关闭' : newMessages}\n`
+      if (newKeepLast !== null && !isNaN(newKeepLast) && setKeepLast(newKeepLast)) msg += `自动压缩保留: ${newKeepLast} 条消息\n`
+      // 【2026-10-13 修】同步主进程内存 config —— auto-compact.mjs 是**独立**写盘的，
+      // 不同步的话内存里还是旧值，之后任何 saveConfig（切 Provider 等）会把它覆盖回去
+      // （实测：设完 270000，切一次配置就变回 0）。saveConfig 侧也加了磁盘合并兜底，
+      // 两处都做才是稳的。
+      if (ctx.config) {
+        if (!isNaN(newTokens)) ctx.config.compactThresholdTokens = newTokens
+        if (!isNaN(newMessages)) ctx.config.compactThresholdMessages = newMessages
+        if (newKeepLast !== null && !isNaN(newKeepLast)) ctx.config.compactKeepLast = newKeepLast
+      }
       if (isAutoCompactEnabled()) msg += `自动压缩: 开启（按固定阈值）`
       else msg += `自动压缩: 已完全关闭（仅手动 /compact）`
-      return msg || '参数无效。用法: /compact-threshold <tokens> <messages>'
+      return msg || '参数无效。用法: /compact-threshold <tokens> <messages> [keepLast]'
     },
 
     // ── /workspace：工作区查看/设置 ──────────────────────────────────

@@ -42,6 +42,7 @@ function loadThresholds() {
       return {
         tokenLimit: DEFAULT_TOKEN_LIMIT,
         messageLimit: DEFAULT_MESSAGE_LIMIT,
+        keepLast: 10,
         maxContext: DEFAULT_MAX_CONTEXT,
         cachePolicy: { ...DEFAULT_CACHE_POLICY },
       }
@@ -50,6 +51,7 @@ function loadThresholds() {
     return {
       tokenLimit: config.compactThresholdTokens ?? DEFAULT_TOKEN_LIMIT,
       messageLimit: config.compactThresholdMessages ?? DEFAULT_MESSAGE_LIMIT,
+      keepLast: config.compactKeepLast ?? 10,
       maxContext: config.maxContextTokens ?? DEFAULT_MAX_CONTEXT,
       cachePolicy: { ...DEFAULT_CACHE_POLICY, ...(config.compaction || {}) },
     }
@@ -69,6 +71,7 @@ function saveThresholds() {
     if (existsSync(CONFIG_PATH)) config = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'))
     config.compactThresholdTokens = tokenLimit
     config.compactThresholdMessages = messageLimit
+    config.compactKeepLast = keepLast
     config.maxContextTokens = maxContext
     config.compaction = { ...(config.compaction || {}), ...cachePolicy, enabled: cachePolicy.enabled === true }
     atomicWrite(CONFIG_PATH, JSON.stringify(config, null, 2))
@@ -77,9 +80,10 @@ function saveThresholds() {
   }
 }
 
-const { tokenLimit: _tl, messageLimit: _ml, maxContext: _mc, cachePolicy: _cp } = loadThresholds()
+const { tokenLimit: _tl, messageLimit: _ml, keepLast: _kl, maxContext: _mc, cachePolicy: _cp } = loadThresholds()
 let tokenLimit = _tl
 let messageLimit = _ml
+let keepLast = _kl
 let maxContext = _mc
 let cachePolicy = { ...DEFAULT_CACHE_POLICY, ..._cp, enabled: false } // 永远不强开自动摘要
 
@@ -118,6 +122,7 @@ function refreshIfChanged() {
     const fresh = loadThresholds()
     tokenLimit = fresh.tokenLimit
     messageLimit = fresh.messageLimit
+    keepLast = fresh.keepLast
     maxContext = fresh.maxContext
     cachePolicy = { ...DEFAULT_CACHE_POLICY, ...fresh.cachePolicy, enabled: false }
   } catch { /* 读不到就保持当前值 */ }
@@ -126,6 +131,7 @@ function refreshIfChanged() {
 export function getTokenLimit() { refreshIfChanged(); return tokenLimit }
 export function getMessageLimit() { refreshIfChanged(); return messageLimit }
 export function getMaxContext() { refreshIfChanged(); return maxContext }
+export function getKeepLast() { refreshIfChanged(); return keepLast }
 export function getCachePolicy() {
   return { ...cachePolicy, maxContextTokens: maxContext, enabled: false }
 }
@@ -156,6 +162,15 @@ export function setTokenLimit(v) {
 export function setMessageLimit(v) {
   if (typeof v === 'number' && (v >= 5 || v === 0)) {
     messageLimit = v
+    saveThresholds()
+    return true
+  }
+  return false
+}
+
+export function setKeepLast(v) {
+  if (typeof v === 'number' && v >= 1 && v <= 10000) {
+    keepLast = v
     saveThresholds()
     return true
   }
@@ -261,6 +276,7 @@ export async function autoCompact(agent, compactService, { print = console.log }
       lastPromptTokens,
       maxContextTokens: maxContext,
       policy: getCachePolicy(),
+      keepLast: getKeepLast(),
       force: true,
     })
     if (!result.compacted) return false
