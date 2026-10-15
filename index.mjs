@@ -6720,12 +6720,24 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
         return
       }
       // select 列表进行中：取消
-      // ★ !processing 守卫（2026-09-29）：select/wizard 是同步阻塞交互，
-      //   不可能与 AI 跑任务并存。若 processing 时这俩钩子还在，必是残留
-      //   （历史 bug：wizard finish 漏清 _wizardCancel）——此时绝不能让它
-      //   抢占 Ctrl+C，否则第一次按键被残留钩子吃掉、要按第二次才真打断。
-      //   正在跑任务时直接跳过，落到下方 processing 分支即时打断。
-      if (rl._selectCancel && !processing) {
+      //
+      // ★ 判据修正（2026-10-15）：原来要求 `!processing`，导致 **/model 无参
+      //   这类向导按 Ctrl+C 退不出来**。
+      //
+      //   根因：slash 命令本身就在 `processing = true` 期间执行（见 5941 行），
+      //   而 /model 无参会进 runSelect 注册 _selectCancel —— 于是守卫恒不成立，
+      //   Ctrl+C 落到下面的 processing 分支去「打断 agent」（可 agent 根本没跑），
+      //   向导纹丝不动。
+      //
+      //   原守卫的顾虑（2026-09-29）是「防残留钩子抢走打断」——那个顾虑对
+      //   **agent 跑任务**时成立，但对「正在执行 slash 命令」不成立：
+      //   向导是同步阻塞的，它存在就说明主流程确实卡在等用户按键。
+      //
+      //   新判据：`activeSlashCommand` 非空 = 当前在跑 slash 命令（向导就是它
+      //   开出来的）→ 允许取消；为空而 processing 为真 = 真在跑 agent →
+      //   跳过，落到下面即时打断。两边都保住。
+      const inSlashCommand = !!activeSlashCommand
+      if (rl._selectCancel && (!processing || inSlashCommand)) {
         const cancel = rl._selectCancel
         rl._selectCancel = null
         cancel()
@@ -6735,8 +6747,8 @@ vision on 时图片原图直入（模型直接看图）；off 时走视觉模型
         showPrompt()
         return
       }
-      // 向导进行中：取消并恢复主输入回调
-      if (rl._wizardCancel && !processing) {
+      // 向导进行中：取消并恢复主输入回调（判据同上）
+      if (rl._wizardCancel && (!processing || inSlashCommand)) {
         const cancel = rl._wizardCancel
         rl._wizardCancel = null
         cancel()
