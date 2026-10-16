@@ -96,8 +96,19 @@ ${ctx.C.dim}生图有两种模式，都由 AI 调用 ImageGen 工具完成：
           case 'url': {
             const u = val.replace(/\/+$/, '')
             ctx.setImageGenConfig({ url: u })
-            const endpoint = /\/images\/generations$/i.test(u) ? u : `${u}/images/generations`
-            return `生图 URL 已设置: ${u}\n(文生图: ${endpoint})\n(图生图: ${endpoint.replace(/\/images\/generations$/i, '/images/edits')})\n${ctx.C.dim}提示：也可填完整端点（以 /images/generations 结尾）；图生图时会自动换成 /images/edits${ctx.C.reset}`
+            // 【2026-10-16 修】预览必须走**真实的端点推导**，不能自己拼。
+            // 原来这里写 `${u}/images/generations`，而实际请求经 resolveEndpoint
+            // 会补 /v1（NewAPI 类站点图像端点在 /v1 下）—— 两处不一致导致预览
+            // 少一段 /v1。用户/AI 照预览去探测就 404，误判成「拼错了」。
+            //
+            // 兜底：ctx.resolveEndpoint 未注入时（老调用点/测试）退回原写法，
+            // 保证不炸。
+            const ep = typeof ctx.resolveEndpoint === 'function'
+              ? (k) => ctx.resolveEndpoint(u, k)
+              : (k) => (/\/images\/generations$/i.test(u)
+                  ? u.replace(/\/images\/(generations|edits)$/i, `/images/${k}`)
+                  : `${u}/images/${k}`)
+            return `生图 URL 已设置: ${u}\n(文生图: ${ep('generations')})\n(图生图: ${ep('edits')})\n${ctx.C.dim}提示：填 base 会自动补 /v1（如 https://xxx.com → https://xxx.com/v1/images/generations）；也可直接填完整端点${ctx.C.reset}`
           }
           case 'key':
             ctx.setImageGenConfig({ apiKey: val })

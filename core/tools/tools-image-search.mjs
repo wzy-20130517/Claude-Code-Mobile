@@ -11,6 +11,7 @@ import { Tool } from './tools.mjs'
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { homedir } from 'node:os'
+import { describeFetchError } from '../infra/net-error.mjs'
 
 const SEARCH_OUT = join(homedir(), '.claude-code-mobile', 'image-search')
 
@@ -74,7 +75,7 @@ export class FindImageTool extends Tool {
       const data = await resp.json()
       photos = (data?.photos || []).map(toPhoto).filter((p) => p.url)
     } catch (e) {
-      return `Pexels 搜索失败: ${e.message}`
+      return `Pexels 搜索失败: ${describeFetchError(e)}`
     }
     if (photos.length === 0) return `「${query}」没有找到图片`
 

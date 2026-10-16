@@ -18,6 +18,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { describeFetchError } from '../infra/net-error.mjs'
 
 const CFG_DIR = join(homedir(), '.claude-code-mobile')
 const CFG_PATH = join(CFG_DIR, 'github.json')
@@ -107,7 +108,10 @@ export async function ghApi(pathOrUrl, { method = 'GET', body = null, token = nu
     }
     return { ok: true, status: res.status, data: json }
   } catch (e) {
-    const kind = e.name === 'TimeoutError' ? `超时（${timeoutMs}ms）` : (e.cause?.code || e.message)
+    // 【2026-10-16 改】原来只看 e.cause?.code || e.message —— 覆盖不全
+    //（cause 链可能更深、可能只有 message、可能只有 name）。
+    // 改用统一工具，与项目其余 fetch 错误处理一致。
+    const kind = e.name === 'TimeoutError' ? `超时（${timeoutMs}ms）` : describeFetchError(e)
     return { ok: false, status: 0, error: String(kind) }
   }
 }

@@ -2,6 +2,7 @@
 // Claude Code Mobile - Agent v4（5次重试 + 修复terminated + aiport tool args）
 import { TraceStore, preview as tracePreview } from '../api/trace.mjs'
 import { resolveToolTimeout, describeTimeout } from '../infra/tool-timeout.mjs'
+import { describeFetchError, isTransportError } from '../infra/net-error.mjs'
 import { StreamArgsPreview, shouldPreviewArgs } from '../ui/stream-args.mjs'
 // 队友消息自动送达用。teams.mjs 不反向依赖 agent.mjs，无循环
 import { readInbox as teamReadInbox } from './teams.mjs'
@@ -1643,7 +1644,23 @@ export class Agent {
   // 声明式异常重试表（Aider ExInfo 风格）：name / retry / description
   // 命中规则按顺序匹配，返回 { retry, description }
   _classifyError(e) {
-    const msg = e.message || e.toString() || ''
+    // 【2026-10-16 改】把 cause 链并进待匹配文本。
+    //
+    // 原来只有 `e.message`。而 Node fetch 传输层失败时 message **恒为
+    // `fetch failed`**，真实原因（ECONNREFUSED / ENOTFOUND / 证书错 /
+    // UND_ERR_CONNECT_TIMEOUT）全在 e.cause 里 —— 只匹配 message 的话，
+    // 下面那张表里所有靠具体错误码区分的规则（network / 各类超时）都只能
+    // 靠 "fetch failed" 这条兜底，分不出是 DNS 挂了还是连不上，
+    // 重试决策和给用户的说明都失准。
+    //
+    // describeFetchError 会把 cause 链摊平成 `fetch failed ← ECONNREFUSED (...)`，
+    // 于是原有的正则（ECONNREFUSED / ENOTFOUND / ETIMEDOUT…）能正常命中。
+    const baseMsg = e.message || e.toString() || ''
+    const netDetail = e?.netDetail || ''
+    const causeText = describeFetchError(e)
+    const msg = causeText && causeText !== baseMsg
+      ? `${baseMsg} | ${causeText}${netDetail && netDetail !== causeText ? ` | ${netDetail}` : ''}`
+      : baseMsg
     if (e?.isContextOverflow || /input\s+exceeds?\s+(?:the\s+)?context\s+window|context\s*(?:window|length|limit)|maximum\s+context|too\s+many\s+tokens|prompt\s+(?:is\s+)?too\s+long|上下文.{0,12}(?:超|过大|限制)/i.test(msg)) {
       return { retry: false, description: '输入超过模型上下文窗口，重试相同请求没有意义', name: 'context_overflow' }
     }

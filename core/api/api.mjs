@@ -2,6 +2,7 @@
 // @ts-nocheck
 import { KeyPool, isKeyExhaustedError, maskKey } from './key-pool.mjs'
 import { normalizeProviderUrl } from './provider-url.mjs'
+import { describeFetchError, isTransportError, fetchErrorCode } from '../infra/net-error.mjs'
 // 超时分级：流式首字节 300s（非流式 600s）
 // 说明：自主任务在息屏挂机模式下，Android Doze 会让网络请求延迟到维护窗口（最长 9 分钟）。
 //       因此 API 超时必须拉长到 5-10 分钟，否则 daemon 还在跑但请求被错误超时。
@@ -2271,8 +2272,22 @@ export class ApiClient {
         // socket 挂断 / 建连失败 / fetch 层异常都可能在池里留下坏连接，
         // 后续复用它的请求（尤其非流式的 /config test）会跟着卡。
         // 只认真正的连接类错误，业务错误（4xx/5xx）不算 —— 那些上面已 throw。
-        if (/socket|ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|network|fetch failed|terminated/i.test(String(e.message || ''))) {
-          this.markConnectionSuspect(`net:${String(e.message).slice(0, 40)}`)
+        //
+        // 【2026-10-16 改】判据从「只看 e.message」换成 isTransportError(e)：
+        // Node fetch 传输层失败时 message **恒为 `fetch failed`**，真实原因在
+        // e.cause（ECONNREFUSED / ENOTFOUND / UND_ERR_CONNECT_TIMEOUT…）。
+        // 原正则虽然能靠 "fetch failed" 命中，但记录进 markConnectionSuspect
+        // 的只有那句无信息量的 message —— 排查时看不出到底是 DNS 挂了还是
+        // 连不上，等于白记。现在用统一工具，把 cause 链一起带进去。
+        if (isTransportError(e)) {
+          const detail = describeFetchError(e)
+          this.markConnectionSuspect(`net:${detail.slice(0, 80)}`)
+          // 把可读原因挂到异常上：上层（agent 错误分类 / trace / 用户可见处）
+          // 拿到的就不是干巴巴的 fetch failed，而是带真实 cause 的说明。
+          try {
+            if (!e.netDetail) e.netDetail = detail
+            if (!e.netCode) e.netCode = fetchErrorCode(e)
+          } catch { /* 冻结对象等极端情况，忽略 */ }
         }
         lastError = e
         if (attempt < this.maxRetries - 1) {

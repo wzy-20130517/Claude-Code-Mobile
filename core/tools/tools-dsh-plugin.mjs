@@ -16,6 +16,7 @@
 // 后端：dsh-host 控制 API（默认 http://127.0.0.1:8790/control/*）
 
 import { Tool } from './tools.mjs'
+import { describeFetchError } from '../infra/net-error.mjs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { homedir } from 'node:os'
@@ -63,7 +64,8 @@ async function ctrl(path, options = {}) {
       return { ok: res.ok, status: res.status, data: text }
     }
   } catch (err) {
-    return { ok: false, status: 0, error: err.message }
+    // 【2026-10-16 改】带 cause 链，别让宿主连接失败只报一句 fetch failed。
+    return { ok: false, status: 0, error: describeFetchError(err) }
   }
 }
 

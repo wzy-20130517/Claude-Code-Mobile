@@ -28,6 +28,7 @@ import { ensureParentDir } from './paths.mjs'
 import { normalizeProviderUrl, providerEndpointPreview } from '../api/provider-url.mjs'
 import { FONT_CHOICES, installFont } from '../ui/font-choice.mjs'
 import { resolveConfigPath } from './paths.mjs'
+import { describeFetchError } from './net-error.mjs'
 
 const C = {
   reset: '\x1b[0m', dim: '\x1b[2m', bold: '\x1b[1m',
@@ -480,7 +481,10 @@ async function testConnection({ url, apiKey, model, protocol }) {
     } catch {}
     return { ok: true }
   } catch (e) {
-    return { ok: false, error: e.name === 'AbortError' ? '请求超时（15s）' : (e.message || String(e)) }
+    // 【2026-10-16 改】原来拼 e.message —— 传输层失败时它恒为 `fetch failed`，
+    // 用户在向导里看到这句根本不知道是域名错、DNS 挂了还是连不上。
+    // 用统一工具把 cause 链带出来（如 `fetch failed ← ENOTFOUND`）。
+    return { ok: false, error: e.name === 'AbortError' ? '请求超时（15s）' : describeFetchError(e) }
   } finally {
     clearTimeout(timer)
   }

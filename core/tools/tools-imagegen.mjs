@@ -15,6 +15,7 @@ import { resolve, join, basename } from 'node:path'
 import { homedir } from 'node:os'
 import { loadEnvFile, resolveEnvString } from '../api/env-secrets.mjs'
 import { getWorkspacePath } from '../infra/workspace.mjs'
+import { describeFetchError } from '../infra/net-error.mjs'
 
 // 【配置路径】必须走 resolveConfigPath：
 //   - 优先 ~/.claude-code-mobile/config.json（数据目录，2026-09 起的主位置）
@@ -74,7 +75,7 @@ function normalizeBase(url) {
  *   2. 已含 /v1 → 直接拼
  *   3. 其他 → 补 /v1 再拼
  */
-function resolveEndpoint(url, kind) {
+export function resolveEndpoint(url, kind) {
   const base = normalizeBase(url)
   const path = kind === 'edits' ? '/images/edits' : '/images/generations'
   // 用户可能把完整端点写进配置：任一形态都换成需要的那个
@@ -258,7 +259,7 @@ export class ImageGenTool extends Tool {
           body: isEdit ? buildForm() : JSON.stringify(body),
         })
       } catch (e) {
-        if (attempt === 2) throw new Error(`生图请求失败（网络）: ${e.message} | endpoint=${endpoint}`)
+        if (attempt === 2) throw new Error(`生图请求失败（网络）: ${describeFetchError(e)} | endpoint=${endpoint}`)
         await new Promise(r => setTimeout(r, 2000 * (attempt + 1)))
         continue
       }

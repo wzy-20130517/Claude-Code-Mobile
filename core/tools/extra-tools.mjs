@@ -1,5 +1,6 @@
 // Claude Code Mobile - 额外工具
 import { Tool } from './tools.mjs'
+import { describeFetchError } from '../infra/net-error.mjs'
 
 /**
  * TodoWrite —— 待办清单。
@@ -173,7 +174,11 @@ export class WebFetchTool extends Tool {
       return `URL: ${input.url}\n\n${text}`
     } catch(e) {
       if (e.name === 'AbortError') throw new Error('Fetch failed: 请求超时 (15s)')
-      throw new Error(`Fetch failed: ${e.message}`)
+      // 【2026-10-16 改】原来直接拼 e.message —— Node fetch 传输层失败时
+      // 它恒为 `fetch failed`，真实原因（DNS 解析不了 / 连不上 / 证书错）
+      // 全在 e.cause 里。用户看到的是「Fetch failed: fetch failed」，
+      // 既不知道发生了什么，也不知道该查什么。改用统一工具带上 cause 链。
+      throw new Error(`Fetch failed: ${describeFetchError(e)}`)
     } finally {
       clearTimeout(timer)
     }

@@ -51,6 +51,7 @@ import { ProjectStore } from './projects.mjs'
 import { getTavilyKey } from '../core/tools/tavily.mjs'
 // 【2026-10-03】卡死检测（freeze-detector）已按用户要求整体删除。
 import { DATA_DIR, resolveConfigPath, WEB_CONFIG_PATH, HOOKS_PATH, MCP_PATH } from '../core/infra/paths.mjs'
+import { describeFetchError } from '../core/infra/net-error.mjs'
 import { startWebQqBridge, loadQqConfig, saveQqConfig } from './qq-integration.mjs'
 import { listEndpoints as listQqEndpoints, detectEndpoint, endpointLabelOf } from '../core/integrations/qq-config.mjs'
 import { QQPushTool, QQRecallTool } from '../core/integrations/qq-tools.mjs'
@@ -2802,7 +2803,9 @@ const server = http.createServer(async (req, res) => {
           const ids = [...new Set(list.map(m => (typeof m?.id === 'string' ? m.id.trim() : (typeof m?.name === 'string' ? m.name.trim() : ''))).filter(Boolean))].sort((a, b) => a.localeCompare(b))
           return json(res, 200, { ok: true, endpoint, models: ids, configured: (provider.models || []).map(m => m.id).filter(Boolean) })
         } catch (e) {
-          return json(res, 200, { ok: false, endpoint, error: `请求失败：${e?.message || '网络异常'}` })
+          // 【2026-10-16 改】同 CLI：fetch 传输层失败时 message 恒为 `fetch failed`，
+          // 设置页测试按钮会把它原样显示给用户，看不出真实原因。带上 cause 链。
+          return json(res, 200, { ok: false, endpoint, error: `请求失败：${describeFetchError(e)}` })
         }
       }
       // 运行健康状态：保活、内存中 runtime 数、崩溃日志是否存在

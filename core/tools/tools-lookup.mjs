@@ -36,6 +36,7 @@
 //   Reddit        ✗ 直连超时
 
 import { Tool } from './tools.mjs'
+import { describeFetchError } from '../infra/net-error.mjs'
 import { mkdirSync, existsSync, writeFileSync, readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
@@ -1112,7 +1113,12 @@ export class LookupTool extends Tool {
       const ps = [...cleaned.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)].map((m) => stripTags(m[1])).filter((s) => s.length > 20)
       full = (ps.length ? ps.join('\n\n') : stripTags(cleaned)).slice(0, 30000)
     } catch (e) {
-      return { ok: false, idx, reason: `抓取失败（${item.source}）: ${e.message}`, url: item.url, title: item.title }
+      // 【2026-10-16 改】原来拼 e.message —— fetch 传输层失败时恒为 `fetch failed`。
+      // 这个报错**直接展示给 AI 和用户**（“抓取失败（xxx）: fetch failed”），
+      // 而 AI（我）会据此误判“站点抓不到”，实际可能只是 DNS 或 TLS 问题。
+      // 带出 cause 链后能区分：ENOTFOUND（域名解析不了）/ ECONNRESET（被重置）
+      // / UND_ERR_CONNECT_TIMEOUT（连不上）——处理方式完全不同。
+      return { ok: false, idx, reason: `抓取失败（${item.source}）: ${describeFetchError(e)}`, url: item.url, title: item.title }
     }
     if (!full || full.length < 30) {
       return {

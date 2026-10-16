@@ -118,7 +118,7 @@ import { TEAM_TOOLS } from './core/tools/tools-teams.mjs'
 import { GITHUB_TOOLS } from './core/tools/tools-github.mjs'
 import { githubStatus, saveGithubConfig, ghApi, parseRepo } from './core/integrations/github.mjs'
 import { listTeams, teamOverview, formatTeamOverview, deleteTeam, inboxCounts } from './core/agent/teams.mjs'
-import { ImageGenTool, getImageGenConfig, setImageGenConfig } from './core/tools/tools-imagegen.mjs'
+import { ImageGenTool, getImageGenConfig, setImageGenConfig, resolveEndpoint as resolveImageEndpoint } from './core/tools/tools-imagegen.mjs'
 import { ocrFile, ocrImage, setVisionConfig, visionEnabled } from './core/phone/ocr.mjs'
 import { atomicWrite } from './core/infra/atomic.mjs'
 import { runRestartPreflight, formatRestartPreflightFailure } from './core/infra/restart-preflight.mjs'
@@ -2897,6 +2897,11 @@ async function main() {
     PROJECT_CONFIG_PATH,
     getImageGenConfig,
     setImageGenConfig,
+    // 【2026-10-16 修】命令侧原来自己拼 `${u}/images/generations` 当预览，
+    // 而实际请求走 resolveEndpoint（会补 /v1）。两处不一致 → 预览显示的
+    // 端点少一段 /v1，用户（和 AI）照着预览去 curl 探测就会得到 404，
+    // 误判成「路径拼错了」。把真实推导函数注入进来，只留一份实现。
+    resolveEndpoint: resolveImageEndpoint,
     runWizard,
     rl: () => rl,
     fsSession: () => fsSession,

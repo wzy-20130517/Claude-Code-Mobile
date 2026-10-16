@@ -24,6 +24,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync
 import { join, dirname, resolve, basename } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
 import { execFileSync } from 'node:child_process'
+import { describeFetchError } from '../infra/net-error.mjs'
 
 // ── 常量 ────────────────────────────────────────────────
 export const REPO = 'wzy-20130517/Claude-Code-Mobile'
@@ -265,7 +266,10 @@ export async function performUpdate(opts) {
     return { ok: true, updated: written, backupDir, changed: changed.length }
 
   } catch (e) {
-    return { ok: false, error: String(e?.message || e) }
+    // 【2026-10-16 改】更新流程里的网络失败会展示给用户（/update 的输出），
+    // 原来拼 e?.message，传输层失败时恒为 `fetch failed` —— 用户不知道
+    // 是下载超时、DNS 挂了还是被墙。带上 cause 链。
+    return { ok: false, error: describeFetchError(e) }
   } finally {
     try { rmSync(tmpBase, { recursive: true, force: true }) } catch {}
   }
