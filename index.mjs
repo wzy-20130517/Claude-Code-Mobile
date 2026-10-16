@@ -1462,7 +1462,7 @@ async function main() {
     Bash: 'Running', Glob: 'Searching', Sleep: 'Waiting',
     Grep: 'Searching', HashlineGrep: 'Searching', WebFetch: 'Fetching',
     WebSearch: 'Searching', Task: 'Running task', Agent: 'Running task',
-    LSP: 'LSP', Memory: 'Writing', TodoWrite: 'Planning',
+    Memory: 'Writing', TodoWrite: 'Planning',
     // 未列出的工具走 `|| row.name` 兜底显示工具名本身，不会空白
     Test: 'Testing', Diagnostics: 'Checking', RepoMap: 'Mapping',
     Symbols: 'Indexing', SafeRename: 'Renaming', ImageGen: 'Drawing',

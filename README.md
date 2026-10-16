@@ -41,8 +41,9 @@ Claude Code Mobile（简称 CCM）是一个**运行在 Android 手机上的命�
 
 ### 🤖 Agent 能力
 
-- **完整工具集**：**100 个工具** —— Read / Write / Edit / MultiEdit / ApplyPatch / Glob / Grep /
-  Bash / WebSearch / WebFetch / TodoWrite / Task / LSP / Hashline 系列等
+- **完整工具集**：**105 个内置工具** —— Read / Write / Edit / MultiEdit / ApplyPatch / Glob / Grep /
+  Bash / WebSearch / WebFetch / TodoWrite / Task / Diagnostics / Symbols / Hashline 系列等
+  （另可接入任意 MCP 服务器，工具随服务器动态注册）
 - **子 Agent 系统**：可派发独立 Agent 并行处理任务，支持递归派生（并发上限 24）
 - **多 Agent 协作**：Team 工具组（建组/派活/通信/收工），Task 持久化待办跨重启存活
 - **AgentWorkflow**：Explore → Plan → Implement → Review 四阶段工作流
@@ -161,7 +162,7 @@ pkg install termux-api
 
 ## 常用命令
 
-**共 96 个内置命令**（下表只列常用的）。
+**共 95 个内置命令**（下表只列常用的）。
 按 `/help` 看全部，`/help <主题>` 看详细说明，`/palette` 开模糊搜索面板。
 
 ### 会话管理
@@ -235,7 +236,7 @@ claude-code-mobile/
 ├── start.sh               # 启动脚本（含重启循环、全局命令安装）
 ├── start-web.sh           # Web 端启动
 │
-├── core/                  # 核心模块（144 个文件，约 4.5 万行）
+├── core/                  # 核心模块（173 个文件，约 4.9 万行）
 │   ├── agent/             # Agent 主循环、子 Agent、任务/团队/Goal、自动记忆
 │   ├── api/               # API 客户端（OpenAI/Anthropic/Responses 三协议）
 │   ├── commands/          # Slash 命令实现（33 个模块 + 注册表 + 向导）
@@ -247,9 +248,9 @@ claude-code-mobile/
 │   └── ui/                # 终端 UI（全屏渲染、虚拟屏幕、Markdown、输入处理）
 │
 ├── web/                   # Web 端（Vue 3 + Vite + Tailwind，约 2.8 万行）
-│   ├── server.mjs         # HTTP/SSE 服务（约 3900 行，与 CLI 共享命令系统）
+│   ├── server.mjs         # HTTP/SSE 服务（约 4000 行，与 CLI 共享命令系统）
 │   ├── src/
-│   │   ├── components/    # 45 个组件（对话/Artifacts/文档/设置…）
+│   │   ├── components/    # 57 个组件（对话/Artifacts/文档/设置…）
 │   │   └── ...            # 页面、状态、API 客户端
 │   └── public/            # 静态资源（Artifacts 示例库等）
 │
@@ -317,10 +318,19 @@ claude-code-mobile/
 
 ```
 CCM (Termux)
-  └─ rish (Shizuku) ─→ shell uid
-       └─ VirtualDisplay（虚拟副屏）
-            └─ UiAutomation（元素树 + 手势注入）
+  └─ rish (Shizuku) 或 adb 回环 ─→ shell uid
+       └─ app_process 加载 dex（常驻进程，监听 :3458）
+            ├─ VirtualDisplay + ImageReader  → 建屏 / 截图
+            ├─ input tap/swipe/keyevent      → 手势注入
+            └─ dumpsys activity top          → 元素树
 ```
+
+**为什么元素树不用 UiAutomation**：实测副屏进程里 `UiAutomation.connect()`
+会被系统 SIGKILL（AccessibilityManagerService 等不到窗口就绪信号，超时后杀进程）。
+所以元素树改走 `dumpsys activity top`（能拿到视图层级 + bounds + resource-id，
+且**不依赖界面 idle**——有动画/视频时也能取）。建屏/截图/手势都不受影响。
+
+需要 focused 节点的文本时，才补一次 `uiautomator dump`（慢，且界面有动画时会失败）。
 
 元素树以**平铺文本**返回（`#e12 Button "发送" 940,2100,1180,2200 c`），
 模型直接读文本、用 id 点击，不用算坐标。

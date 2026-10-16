@@ -17,7 +17,7 @@ export const DECORATIVE_TOOLS = new Set([
 // plan 模式允许的只读工具
 const PLAN_ALLOWED = new Set([
   'Read', 'Glob', 'Grep', 'HashlineRead', 'HashlineGrep', 'Bash',
-  'WebFetch', 'WebSearch', 'LSP', 'GitStatus', 'GitDiff', 'GitLog',
+  'WebFetch', 'WebSearch', 'GitStatus', 'GitDiff', 'GitLog',
   'TodoWrite', 'ExitPlanMode', 'EnterPlanMode', 'EnterWatch', 'ExitWatch', 'Agent', 'Skill',
   'UserInputHistory', 'ViewImage', 'CommandExec', 'AskUserQuestion',
   'Test', 'Diagnostics', 'RepoMap', 'Symbols',

@@ -240,7 +240,8 @@ export const BUILTIN_SUBAGENT_TYPES = {
   },
   'Explore': {
     description: '探索子 agent，只读工具，用于调研代码库、解答"代码在哪/怎么实现"等问题',
-    toolNames: ['Read', 'Glob', 'Grep', 'Bash', 'WebFetch', 'HashlineRead', 'HashlineGrep', 'LSP'],
+    toolNames: ['Read', 'Glob', 'Grep', 'Bash', 'WebFetch', 'HashlineRead', 'HashlineGrep',
+      'Diagnostics', 'Symbols', 'RepoMap'],
     maxTurns: 200,
     promptAddition: `\n# 你的角色：探索子 Agent (Explore)
 你是一个只读的探索子 Agent，用于调研代码库结构、查找文件、理解实现。

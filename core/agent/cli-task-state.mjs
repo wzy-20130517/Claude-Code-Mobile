@@ -29,7 +29,7 @@ function inputSummary(input = {}) {
 function isCheckTool(name, input = {}) {
   const n = String(name || '')
   const command = String(input.command || '').toLowerCase()
-  return n === 'Test' || n === 'Diagnostics' || n === 'LSP' ||
+  return n === 'Test' || n === 'Diagnostics' ||
     // 跑 tests/ 目录下的脚本也算检查（`\btest\b` 匹配不到 tests/key-pool.mjs，
     // 因为那里的词是 tests 不是 test，会漏统计）
     /(^|\s|\/)tests?\//.test(command) ||
@@ -277,9 +277,8 @@ function classifyCheck(check) {
   const cmd = String(check?.command || '').trim()
   const name = String(check?.name || '')
   if (!cmd) {
-    // 没有命令的走工具名（Test / Diagnostics / LSP）
+    // 没有命令的走工具名（Test / Diagnostics）
     if (name === 'Diagnostics') return '代码诊断'
-    if (name === 'LSP') return 'LSP 检查'
     if (name === 'Test') return '测试'
     return name || '检查'
   }

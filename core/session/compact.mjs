@@ -47,7 +47,7 @@ const LEGACY_RE = /^\[历史摘要\]/
 // 输出可再生的工具：重跑一次就能拿回同样内容，截断无信息损失
 const MICRO_REGENERABLE_TOOLS = new Set([
   'Read', 'Glob', 'Grep', 'CodeSearch', 'HashlineRead', 'HashlineGrep',
-  'Symbols', 'RepoMap', 'Diagnostics', 'LSP',
+  'Symbols', 'RepoMap', 'Diagnostics',
   'GitStatus', 'GitDiff', 'GitLog',
   'Bash', 'BashOutput', 'Test',
   'WebFetch', 'WebSearch',
